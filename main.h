@@ -13,7 +13,7 @@ struct SwapchainProperties {
     vk::SurfaceFormatKHR surfaceFormat;
     vk::PresentModeKHR presentMode;
     vk::Extent2D extent;
-    uint32_t minImageCount;
+    std::uint32_t minImageCount;
     vk::SurfaceTransformFlagBitsKHR transform;
 };
 
@@ -48,15 +48,11 @@ private:
     std::vector<vk::UniqueImageView> m_swapchainImageViews{};
 
     vk::UniqueRenderPass m_renderPass;
+    vk::UniqueDescriptorSetLayout m_descriptorSetLayout;
     vk::UniquePipelineLayout m_pipelineLayout;
     vk::UniquePipeline m_graphicsPipeline;
 
     std::vector<vk::UniqueFramebuffer> m_framebuffers{};
-
-    vk::UniqueBuffer m_vertexBuffer;
-    vk::UniqueDeviceMemory m_vertexBufferMemory;
-    vk::UniqueBuffer m_indexBuffer;
-    vk::UniqueDeviceMemory m_indexBufferMemory;
 
     vk::UniqueCommandPool m_commandPool;
     std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
@@ -65,11 +61,24 @@ private:
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
     std::vector<vk::UniqueFence> m_inFlightFences;
 
-    size_t m_currentFrame = 0;
+    vk::UniqueBuffer m_vertexBuffer;
+    vk::UniqueDeviceMemory m_vertexBufferMemory;
+    vk::UniqueBuffer m_indexBuffer;
+    vk::UniqueDeviceMemory m_indexBufferMemory;
+
+    std::vector<vk::UniqueBuffer> m_uniformBuffers{};
+    std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
+
+    vk::UniqueDescriptorPool m_descriptorPool;
+    std::vector<vk::UniqueDescriptorSet> m_descriptorSets;
+
+    std::size_t m_currentFrame = 0;
 
 // logic stuff
-    size_t m_fpsCounter;
-    std::chrono::milliseconds m_lastFpsTimePoint;
+    std::chrono::system_clock::time_point m_startTime;
+
+    std::size_t m_fpsCounter;
+    std::chrono::system_clock::time_point m_lastFpsTimePoint;
 };
 
 #endif // MAIN_H
