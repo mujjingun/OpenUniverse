@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(OpenUniverse)
 add_executable(${PROJECT_NAME}
     main.cpp
+    vulkan_routines.cpp
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

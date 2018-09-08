@@ -1,21 +1,13 @@
 #ifndef MAIN_H
 #define MAIN_H
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#include <vulkan/vulkan.hpp>
-
+#include <chrono>
 #include <memory>
 #include <vector>
-#include <chrono>
 
-struct SwapchainProperties {
-    vk::SurfaceFormatKHR surfaceFormat;
-    vk::PresentModeKHR presentMode;
-    vk::Extent2D extent;
-    std::uint32_t minImageCount;
-    vk::SurfaceTransformFlagBitsKHR transform;
-};
+#include "vulkan_routines.h"
+
+namespace ou {
 
 class VulkanApplication {
 
@@ -29,8 +21,8 @@ private:
     void drawFrame();
 
 private:
-// graphics stuff
-    std::unique_ptr<GLFWwindow, void(*)(GLFWwindow*)> m_window;
+    // graphics stuff
+    std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)> m_window;
 
     vk::UniqueInstance m_instance;
     vk::DispatchLoaderDynamic m_dispatchLoader;
@@ -75,6 +67,7 @@ private:
     std::vector<vk::UniqueBuffer> m_uniformBuffers{};
     std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
 
+    std::uint32_t m_mipLevels;
     vk::UniqueImage m_textureImage;
     vk::UniqueDeviceMemory m_textureImageMemory;
     vk::UniqueImageView m_textureImageView;
@@ -82,11 +75,13 @@ private:
 
     std::size_t m_currentFrame = 0;
 
-// logic stuff
+    // logic stuff
     std::chrono::system_clock::time_point m_startTime;
 
     std::size_t m_fpsCounter;
     std::chrono::system_clock::time_point m_lastFpsTimePoint;
 };
+
+} // namespace ou
 
 #endif // MAIN_H
