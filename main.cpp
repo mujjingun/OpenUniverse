@@ -13,6 +13,7 @@
 #include <string>
 
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -478,7 +479,8 @@ std::vector<vk::Image> retrieveSwapchainImages(vk::Device device, vk::SwapchainK
     return device.getSwapchainImagesKHR(swapchain);
 }
 
-vk::UniqueImageView makeImageView(vk::Device device, vk::Image image, vk::Format imageFormat)
+vk::UniqueImageView makeImageView(vk::Device device, vk::Image image, vk::Format imageFormat,
+    vk::ImageAspectFlags imageType = vk::ImageAspectFlagBits::eColor)
 {
     vk::ImageViewCreateInfo imageViewCreateInfo{};
     imageViewCreateInfo.image = image;
@@ -492,7 +494,7 @@ vk::UniqueImageView makeImageView(vk::Device device, vk::Image image, vk::Format
     imageViewCreateInfo.components.a = vk::ComponentSwizzle::eIdentity;
 
     // no mipmapping
-    imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    imageViewCreateInfo.subresourceRange.aspectMask = imageType;
     imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
     imageViewCreateInfo.subresourceRange.levelCount = 1;
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
@@ -527,28 +529,45 @@ vk::UniqueShaderModule createShaderModule(vk::Device device, std::vector<char> c
     return device.createShaderModuleUnique(shaderModuleCreateInfo);
 }
 
-vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::Format imageFormat)
+vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::Format imageFormat, vk::Format depthFormat)
 {
-    // make render pass
-    vk::AttachmentDescription colorAttachment{};
-    colorAttachment.format = imageFormat;
-    colorAttachment.samples = vk::SampleCountFlagBits::e1;
-    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-    colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-    colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
-    colorAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+    std::array<vk::AttachmentDescription, 2> attachments;
+
+    // color attachment
+    attachments[0].format = imageFormat;
+    attachments[0].samples = vk::SampleCountFlagBits::e1;
+    attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
+    attachments[0].storeOp = vk::AttachmentStoreOp::eStore;
+    attachments[0].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    attachments[0].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    attachments[0].initialLayout = vk::ImageLayout::eUndefined;
+    attachments[0].finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+    // depth attachment
+    attachments[1].format = depthFormat;
+    attachments[1].samples = vk::SampleCountFlagBits::e1;
+    attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
+    attachments[1].storeOp = vk::AttachmentStoreOp::eDontCare;
+    attachments[1].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    attachments[1].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    attachments[1].initialLayout = vk::ImageLayout::eUndefined;
+    attachments[1].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
     std::array<vk::AttachmentReference, 1> colorAttachmentRefs{};
     // layout(location = 0) out vec4 outColor
     colorAttachmentRefs[0].attachment = 0;
     colorAttachmentRefs[0].layout = vk::ImageLayout::eColorAttachmentOptimal;
 
+    // only 1 depth attachment allowed
+    vk::AttachmentReference depthAttachmentRef{};
+    depthAttachmentRef.attachment = 1;
+    depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
     vk::SubpassDescription subpass{};
     subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
     subpass.colorAttachmentCount = colorAttachmentRefs.size();
     subpass.pColorAttachments = colorAttachmentRefs.data();
+    subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
     // wait until the image is loaded
     vk::SubpassDependency dependency{};
@@ -560,8 +579,8 @@ vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::Format imageFormat)
     dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
 
     vk::RenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.attachmentCount = attachments.size();
+    renderPassInfo.pAttachments = attachments.data();
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
     renderPassInfo.dependencyCount = 1;
@@ -582,7 +601,7 @@ vk::UniquePipelineLayout makePipelineLayout(vk::Device device, vk::DescriptorSet
 }
 
 struct Vertex {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
 
@@ -601,7 +620,7 @@ struct Vertex {
         std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions = {};
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+        attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
         attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
         attributeDescriptions[1].binding = 0;
@@ -715,11 +734,12 @@ vk::UniquePipeline makePipeline(
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
-    std::array<vk::DynamicState, 2> dynamicStates = { { vk::DynamicState::eViewport, vk::DynamicState::eLineWidth } };
-
-    vk::PipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.dynamicStateCount = dynamicStates.size();
-    dynamicState.pDynamicStates = dynamicStates.data();
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.stageCount = shaderStages.size();
@@ -729,7 +749,7 @@ vk::UniquePipeline makePipeline(
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr;
+    pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = nullptr;
 
@@ -746,7 +766,8 @@ vk::UniquePipeline makePipeline(
 }
 
 std::vector<vk::UniqueFramebuffer> makeFramebuffers(vk::Device device,
-    std::vector<vk::UniqueImageView> const& imageViews, vk::RenderPass renderPass, vk::Extent2D swapChainExtent)
+    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView,
+    vk::RenderPass renderPass, vk::Extent2D swapChainExtent)
 {
     std::vector<vk::UniqueFramebuffer> framebuffers;
 
@@ -754,11 +775,9 @@ std::vector<vk::UniqueFramebuffer> makeFramebuffers(vk::Device device,
         vk::FramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.renderPass = renderPass;
 
-        // number of attached ImageViews
-        framebufferInfo.attachmentCount = 1;
-
-        vk::ImageView imageView = uniqueImageView.get();
-        framebufferInfo.pAttachments = &imageView;
+        std::array<vk::ImageView, 2> attachments = { { uniqueImageView.get(), depthImageView } };
+        framebufferInfo.attachmentCount = attachments.size();
+        framebufferInfo.pAttachments = attachments.data();
 
         framebufferInfo.width = swapChainExtent.width;
         framebufferInfo.height = swapChainExtent.height;
@@ -1019,7 +1038,13 @@ void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Queue qu
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
     barrier.image = image;
-    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+
+    if (newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+    } else {
+        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    }
+
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
@@ -1040,6 +1065,13 @@ void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Queue qu
 
         sourceStage = vk::PipelineStageFlagBits::eTransfer;
         destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead
+            | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
     } else {
         throw std::invalid_argument("unsupported layout transition");
     }
@@ -1054,6 +1086,41 @@ struct ImageObject {
     vk::UniqueDeviceMemory imageMemory;
     vk::Format format;
 };
+
+ImageObject makeImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::Extent2D extent, vk::Format format,
+    vk::ImageUsageFlags usage)
+{
+    // create image objects
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = extent.width;
+    imageInfo.extent.height = extent.height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.flags = {};
+
+    vk::UniqueImage image = device.createImageUnique(imageInfo);
+
+    // allocate memory to the image
+    vk::MemoryRequirements memRequirements = device.getImageMemoryRequirements(image.get());
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = selectMemoryType(physicalDevice, memRequirements.memoryTypeBits,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    vk::UniqueDeviceMemory imageMemory = device.allocateMemoryUnique(allocInfo);
+
+    device.bindImageMemory(image.get(), imageMemory.get(), 0);
+
+    return { std::move(image), std::move(imageMemory), imageInfo.format };
+}
 
 ImageObject makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Device device, const char* filename,
     vk::CommandPool commandPool, vk::Queue queue)
@@ -1078,48 +1145,24 @@ ImageObject makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Device devic
     stbi_image_free(pixels);
 
     // create image object
-    vk::ImageCreateInfo imageInfo{};
-    imageInfo.imageType = vk::ImageType::e2D;
-    imageInfo.extent.width = static_cast<uint32_t>(texWidth);
-    imageInfo.extent.height = static_cast<uint32_t>(texHeight);
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = vk::Format::eR8G8B8A8Unorm;
-    imageInfo.tiling = vk::ImageTiling::eOptimal;
-    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
-    imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
-    imageInfo.sharingMode = vk::SharingMode::eExclusive;
-    imageInfo.samples = vk::SampleCountFlagBits::e1;
-    imageInfo.flags = {};
-
-    vk::UniqueImage image = device.createImageUnique(imageInfo);
-
-    // allocate memory to the image
-    vk::MemoryRequirements memRequirements = device.getImageMemoryRequirements(image.get());
-
-    vk::MemoryAllocateInfo allocInfo{};
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = selectMemoryType(physicalDevice, memRequirements.memoryTypeBits,
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
-    vk::UniqueDeviceMemory imageMemory = device.allocateMemoryUnique(allocInfo);
-
-    device.bindImageMemory(image.get(), imageMemory.get(), 0);
+    ImageObject texture = makeImage(physicalDevice, device,
+        { static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight) },
+        vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
 
     // image layout is not gpu accessible by now
-    transitionImageLayout(device, commandPool, queue, image.get(),
+    transitionImageLayout(device, commandPool, queue, texture.image.get(),
         vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
     // copy buffer to image
-    copyBufferToImage(stagingBuffer.get(), image.get(),
+    copyBufferToImage(stagingBuffer.get(), texture.image.get(),
         static_cast<std::uint32_t>(texWidth), static_cast<std::uint32_t>(texHeight),
         device, commandPool, queue);
 
     // change image layout
-    transitionImageLayout(device, commandPool, queue, image.get(),
+    transitionImageLayout(device, commandPool, queue, texture.image.get(),
         vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    return { std::move(image), std::move(imageMemory), imageInfo.format };
+    return texture;
 }
 
 vk::UniqueSampler makeTextureSampler(vk::Device device)
@@ -1148,19 +1191,56 @@ vk::UniqueSampler makeTextureSampler(vk::Device device)
     return device.createSamplerUnique(samplerInfo);
 }
 
+ImageObject makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool,
+    vk::Queue queue, vk::Extent2D extent)
+{
+    vk::Format depthFormat = [&]() {
+        auto candidateFormats = { vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint };
+        auto depthFormatIt = std::find_if(candidateFormats.begin(), candidateFormats.end(),
+            [&](vk::Format format) {
+                vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+                const auto features = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
+                return (props.optimalTilingFeatures & features) == features;
+            });
+        if (depthFormatIt == candidateFormats.end()) {
+            throw std::runtime_error("no depth & stencil format supported");
+        }
+
+        return *depthFormatIt;
+    }();
+
+    // create image object
+    ImageObject depth = makeImage(physicalDevice, device, extent, depthFormat,
+        vk::ImageUsageFlagBits::eDepthStencilAttachment);
+
+    // make it a depth buffer
+    transitionImageLayout(device, commandPool, queue, depth.image.get(),
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+    return depth;
+}
+
 } // anonymous namespace
 
 static const std::vector<Vertex> vertices = {
-    { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-    { { 0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-    { { 0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { { -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
+    { { -0.5f, -0.5f, 0.2f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
+    { { 0.5f, -0.5f, 0.2f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
+    { { 0.5f, 0.5f, 0.2f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
+    { { -0.5f, 0.5f, 0.2f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
+
+    { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
+    { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
+    { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
+    { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
 };
 
-static const std::vector<std::uint16_t> indices = { 0, 1, 2, 2, 3, 0 };
+static const std::vector<std::uint16_t> indices = {
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
+};
 
 VulkanApplication::VulkanApplication()
-    : m_window(makeWindow(800, 600))
+    : m_window(makeWindow(1024, 768))
     , m_instance(makeInstance())
     , m_dispatchLoader(m_instance.get())
     , m_callback(makeDebugMessenger(m_instance.get(), m_dispatchLoader))
@@ -1183,22 +1263,33 @@ VulkanApplication::VulkanApplication()
         m_swapchainImageViews.push_back(makeImageView(m_device.get(), image, m_swapchainProps.surfaceFormat.format));
     }
 
-    // make render pass
-    m_renderPass = makeRenderPass(m_device.get(), m_swapchainProps.surfaceFormat.format);
+    // make command pool and command buffers
+    m_commandPool = makeCommandPool(m_device.get(), queueFamilies.graphicsFamilyIndex);
+    m_commandBuffers = allocateCommandBuffers(m_device.get(), m_commandPool.get(), swapchainImageCount);
 
-    // make description set layout
+    // make depth buffer
+    ImageObject depth = makeDepthImage(physicalDevice, m_device.get(), m_commandPool.get(),
+        m_graphicsQueue, m_swapchainProps.extent);
+    m_depthImage = std::move(depth.image);
+    m_depthImageMemory = std::move(depth.imageMemory);
+    m_depthImageView = makeImageView(m_device.get(), m_depthImage.get(), depth.format, vk::ImageAspectFlagBits::eDepth);
+
+    // make render pass
+    m_renderPass = makeRenderPass(m_device.get(), m_swapchainProps.surfaceFormat.format, depth.format);
+
+    // make description set layout, pool, and sets
     m_descriptorSetLayout = makeDescriptorSetLayout(m_device.get());
+    m_descriptorPool = makeDescriptorPool(m_device.get(), swapchainImageCount);
+    m_descriptorSets = makeDescriptorSets(m_device.get(), m_descriptorPool.get(),
+        m_descriptorSetLayout.get(), swapchainImageCount);
 
     // make pipeline
     m_pipelineLayout = makePipelineLayout(m_device.get(), m_descriptorSetLayout.get());
     m_graphicsPipeline = makePipeline(m_device.get(), m_pipelineLayout.get(), m_swapchainProps.extent, m_renderPass.get());
 
     // make framebuffers
-    m_framebuffers = makeFramebuffers(m_device.get(), m_swapchainImageViews, m_renderPass.get(), m_swapchainProps.extent);
-
-    // make command pool and command buffers
-    m_commandPool = makeCommandPool(m_device.get(), queueFamilies.graphicsFamilyIndex);
-    m_commandBuffers = allocateCommandBuffers(m_device.get(), m_commandPool.get(), swapchainImageCount);
+    m_framebuffers = makeFramebuffers(m_device.get(), m_swapchainImageViews, m_depthImageView.get(),
+        m_renderPass.get(), m_swapchainProps.extent);
 
     // make semaphores for synchronizing frame drawing operations
     for (std::size_t index = 0; index < maxFramesInFlight; ++index) {
@@ -1226,13 +1317,6 @@ VulkanApplication::VulkanApplication()
         m_uniformBuffersMemory.push_back(allocateBufferMemory(physicalDevice, m_device.get(), m_uniformBuffers.back().get(),
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
-
-    // make descriptor pool
-    m_descriptorPool = makeDescriptorPool(m_device.get(), swapchainImageCount);
-
-    // make descriptor sets
-    m_descriptorSets = makeDescriptorSets(m_device.get(), m_descriptorPool.get(),
-        m_descriptorSetLayout.get(), swapchainImageCount);
 
     // make textures
     ImageObject texture = makeTextureImage(physicalDevice, m_device.get(), "textures/texture.jpg",
@@ -1293,14 +1377,20 @@ void VulkanApplication::recordDrawCommands()
         renderPassInfo.renderArea.offset.y = 0;
         renderPassInfo.renderArea.extent = m_swapchainProps.extent;
 
-        vk::ClearValue clearColor{};
-        clearColor.color.float32[0] = 0.0f;
-        clearColor.color.float32[1] = 0.0f;
-        clearColor.color.float32[2] = 0.0f;
-        clearColor.color.float32[3] = 1.0f;
+        std::array<vk::ClearValue, 2> clearValues{};
 
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
+        // color buffer clear value
+        clearValues[0].color.float32[0] = 0.0f;
+        clearValues[0].color.float32[1] = 0.0f;
+        clearValues[0].color.float32[2] = 0.0f;
+        clearValues[0].color.float32[3] = 1.0f;
+
+        // depth buffer clear value
+        clearValues[1].depthStencil.depth = 1.0f;
+        clearValues[1].depthStencil.stencil = 0;
+
+        renderPassInfo.clearValueCount = clearValues.size();
+        renderPassInfo.pClearValues = clearValues.data();
 
         commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
@@ -1374,7 +1464,8 @@ void VulkanApplication::drawFrame()
         float time = duration<float, seconds::period>(getCurrentTimePoint() - m_startTime).count();
         UniformBufferObject ubo = {};
         ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(1.0f, 1.0f, ((glm::sin(time) + 1.0f) / 2.0f) * 2.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
             0.1f, 10.0f);

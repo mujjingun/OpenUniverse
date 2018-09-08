@@ -47,15 +47,21 @@ private:
     std::vector<vk::Image> m_swapchainImages{};
     std::vector<vk::UniqueImageView> m_swapchainImageViews{};
 
+    vk::UniqueCommandPool m_commandPool;
+    std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
+
+    vk::UniqueImage m_depthImage;
+    vk::UniqueDeviceMemory m_depthImageMemory;
+    vk::UniqueImageView m_depthImageView;
+
     vk::UniqueRenderPass m_renderPass;
     vk::UniqueDescriptorSetLayout m_descriptorSetLayout;
+    vk::UniqueDescriptorPool m_descriptorPool;
+    std::vector<vk::UniqueDescriptorSet> m_descriptorSets;
     vk::UniquePipelineLayout m_pipelineLayout;
     vk::UniquePipeline m_graphicsPipeline;
 
     std::vector<vk::UniqueFramebuffer> m_framebuffers{};
-
-    vk::UniqueCommandPool m_commandPool;
-    std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
@@ -68,9 +74,6 @@ private:
 
     std::vector<vk::UniqueBuffer> m_uniformBuffers{};
     std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
-
-    vk::UniqueDescriptorPool m_descriptorPool;
-    std::vector<vk::UniqueDescriptorSet> m_descriptorSets;
 
     vk::UniqueImage m_textureImage;
     vk::UniqueDeviceMemory m_textureImageMemory;
