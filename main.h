@@ -72,6 +72,11 @@ private:
     vk::UniqueDescriptorPool m_descriptorPool;
     std::vector<vk::UniqueDescriptorSet> m_descriptorSets;
 
+    vk::UniqueImage m_textureImage;
+    vk::UniqueDeviceMemory m_textureImageMemory;
+    vk::UniqueImageView m_textureImageView;
+    vk::UniqueSampler m_sampler;
+
     std::size_t m_currentFrame = 0;
 
 // logic stuff

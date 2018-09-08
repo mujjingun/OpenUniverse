@@ -20,5 +20,7 @@ target_link_libraries(${PROJECT_NAME}
     glm
 )
 
+target_include_directories(${PROJECT_NAME} PRIVATE libraries)
+
 add_subdirectory(shaders)
 add_dependencies(${PROJECT_NAME} "${PROJECT_NAME}_Shaders")
