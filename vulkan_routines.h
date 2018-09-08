@@ -53,17 +53,17 @@ std::vector<vk::Image> retrieveSwapchainImages(vk::Device device, vk::SwapchainK
 vk::UniqueImageView makeImageView(vk::Device device, vk::Image image, vk::Format imageFormat,
     vk::ImageAspectFlags imageType, uint32_t mipLevels);
 
-vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::Format imageFormat, vk::Format depthFormat);
+vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::SampleCountFlagBits sampleCount,
+    vk::Format imageFormat, vk::Format depthFormat);
 
 vk::UniquePipelineLayout makePipelineLayout(vk::Device device, vk::DescriptorSetLayout descriptorSetLayout);
 
-vk::UniquePipeline makePipeline(
-    vk::Device device, vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass,
+vk::UniquePipeline makePipeline(vk::Device device, vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
     vk::VertexInputBindingDescription bindingDescription,
     std::vector<vk::VertexInputAttributeDescription> attributeDescriptions);
 
 std::vector<vk::UniqueFramebuffer> makeFramebuffers(vk::Device device,
-    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView,
+    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
     vk::RenderPass renderPass, vk::Extent2D swapChainExtent);
 
 vk::UniqueCommandPool makeCommandPool(vk::Device device, std::uint32_t queueFamilyIndex);
@@ -105,7 +105,7 @@ struct ImageObject {
     vk::Format format;
 };
 
-ImageObject makeImage(vk::PhysicalDevice physicalDevice, vk::Device device,
+ImageObject makeImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SampleCountFlagBits numSamples,
     std::uint32_t mipLevels, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage);
 
 ImageObject makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Device device, const char* filename,
@@ -113,8 +113,13 @@ ImageObject makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Device devic
 
 vk::UniqueSampler makeTextureSampler(vk::Device device);
 
+vk::SampleCountFlagBits getMaxUsableSampleCount(vk::PhysicalDevice physicalDevice);
+
 ImageObject makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool,
-    vk::Queue queue, vk::Extent2D extent);
+    vk::Queue queue, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount);
+
+ImageObject makeMultiSampleImage(vk::PhysicalDevice physicalDevice, vk::Device device, VkCommandPool commandPool,
+    vk::Queue queue, vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount);
 
 } // namespace ou
 

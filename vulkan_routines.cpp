@@ -508,29 +508,40 @@ static vk::UniqueShaderModule createShaderModule(vk::Device device, std::vector<
     return device.createShaderModuleUnique(shaderModuleCreateInfo);
 }
 
-vk::UniqueRenderPass ou::makeRenderPass(vk::Device device, vk::Format imageFormat, vk::Format depthFormat)
+vk::UniqueRenderPass ou::makeRenderPass(vk::Device device, vk::SampleCountFlagBits sampleCount,
+    vk::Format imageFormat, vk::Format depthFormat)
 {
-    std::array<vk::AttachmentDescription, 2> attachments;
+    std::array<vk::AttachmentDescription, 3> attachments;
 
     // color attachment
     attachments[0].format = imageFormat;
-    attachments[0].samples = vk::SampleCountFlagBits::e1;
+    attachments[0].samples = sampleCount;
     attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
     attachments[0].storeOp = vk::AttachmentStoreOp::eStore;
     attachments[0].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
     attachments[0].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
     attachments[0].initialLayout = vk::ImageLayout::eUndefined;
-    attachments[0].finalLayout = vk::ImageLayout::ePresentSrcKHR;
+    attachments[0].finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
 
     // depth attachment
     attachments[1].format = depthFormat;
-    attachments[1].samples = vk::SampleCountFlagBits::e1;
+    attachments[1].samples = sampleCount;
     attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
     attachments[1].storeOp = vk::AttachmentStoreOp::eDontCare;
     attachments[1].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
     attachments[1].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
     attachments[1].initialLayout = vk::ImageLayout::eUndefined;
     attachments[1].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+    // multisample resolve attachment
+    attachments[2].format = imageFormat;
+    attachments[2].samples = vk::SampleCountFlagBits::e1;
+    attachments[2].loadOp = vk::AttachmentLoadOp::eDontCare;
+    attachments[2].storeOp = vk::AttachmentStoreOp::eStore;
+    attachments[2].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    attachments[2].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    attachments[2].initialLayout = vk::ImageLayout::eUndefined;
+    attachments[2].finalLayout = vk::ImageLayout::ePresentSrcKHR;
 
     std::array<vk::AttachmentReference, 1> colorAttachmentRefs{};
     // layout(location = 0) out vec4 outColor
@@ -542,11 +553,16 @@ vk::UniqueRenderPass ou::makeRenderPass(vk::Device device, vk::Format imageForma
     depthAttachmentRef.attachment = 1;
     depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
+    vk::AttachmentReference multiSampleResolveRef{};
+    multiSampleResolveRef.attachment = 2;
+    multiSampleResolveRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
     vk::SubpassDescription subpass{};
     subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
     subpass.colorAttachmentCount = colorAttachmentRefs.size();
     subpass.pColorAttachments = colorAttachmentRefs.data();
     subpass.pDepthStencilAttachment = &depthAttachmentRef;
+    subpass.pResolveAttachments = &multiSampleResolveRef;
 
     // wait until the image is loaded
     vk::SubpassDependency dependency{};
@@ -581,7 +597,7 @@ vk::UniquePipelineLayout ou::makePipelineLayout(vk::Device device, vk::Descripto
 
 vk::UniquePipeline ou::makePipeline(
     vk::Device device, vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass,
-    vk::VertexInputBindingDescription bindingDescription,
+    vk::SampleCountFlagBits sampleCount, vk::VertexInputBindingDescription bindingDescription,
     std::vector<vk::VertexInputAttributeDescription> attributeDescriptions)
 {
     // make shaders
@@ -642,7 +658,7 @@ vk::UniquePipeline ou::makePipeline(
 
     vk::PipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+    multisampling.rasterizationSamples = sampleCount;
     multisampling.minSampleShading = 1.0f;
     multisampling.pSampleMask = nullptr;
     multisampling.alphaToCoverageEnable = VK_FALSE;
@@ -701,7 +717,7 @@ vk::UniquePipeline ou::makePipeline(
 }
 
 std::vector<vk::UniqueFramebuffer> ou::makeFramebuffers(vk::Device device,
-    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView,
+    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
     vk::RenderPass renderPass, vk::Extent2D swapChainExtent)
 {
     std::vector<vk::UniqueFramebuffer> framebuffers;
@@ -710,7 +726,9 @@ std::vector<vk::UniqueFramebuffer> ou::makeFramebuffers(vk::Device device,
         vk::FramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.renderPass = renderPass;
 
-        std::array<vk::ImageView, 2> attachments = { { uniqueImageView.get(), depthImageView } };
+        std::array<vk::ImageView, 3> attachments = {
+            { multiSampleImageView, depthImageView, uniqueImageView.get() }
+        };
         framebufferInfo.attachmentCount = attachments.size();
         framebufferInfo.pAttachments = attachments.data();
 
@@ -1000,6 +1018,12 @@ static void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Q
 
         sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
         destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
+    } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        sourceStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
     } else {
         throw std::invalid_argument("unsupported layout transition");
     }
@@ -1009,7 +1033,7 @@ static void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Q
     submitSingleTimeCommands(commandBuffer.get(), queue);
 }
 
-ou::ImageObject ou::makeImage(vk::PhysicalDevice physicalDevice, vk::Device device,
+ou::ImageObject ou::makeImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SampleCountFlagBits numSamples,
     std::uint32_t mipLevels, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage)
 {
     // create image objects
@@ -1025,7 +1049,7 @@ ou::ImageObject ou::makeImage(vk::PhysicalDevice physicalDevice, vk::Device devi
     imageInfo.initialLayout = vk::ImageLayout::eUndefined;
     imageInfo.usage = usage;
     imageInfo.sharingMode = vk::SharingMode::eExclusive;
-    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.samples = numSamples;
     imageInfo.flags = {};
 
     vk::UniqueImage image = device.createImageUnique(imageInfo);
@@ -1161,7 +1185,7 @@ ou::ImageObject ou::makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Devi
 
     // create image object
     const vk::Format imageFormat = vk::Format::eR8G8B8A8Unorm;
-    ImageObject texture = makeImage(physicalDevice, device, mipLevels, imageExtent, imageFormat,
+    ImageObject texture = makeImage(physicalDevice, device, vk::SampleCountFlagBits::e1, mipLevels, imageExtent, imageFormat,
         vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
 
     // image layout is not gpu accessible by now
@@ -1204,8 +1228,30 @@ vk::UniqueSampler ou::makeTextureSampler(vk::Device device)
     return device.createSamplerUnique(samplerInfo);
 }
 
+vk::SampleCountFlagBits ou::getMaxUsableSampleCount(vk::PhysicalDevice physicalDevice)
+{
+    vk::PhysicalDeviceProperties physicalDeviceProperties = physicalDevice.getProperties();
+
+    vk::SampleCountFlags counts = static_cast<vk::SampleCountFlags>(std::min(
+        static_cast<std::uint32_t>(physicalDeviceProperties.limits.framebufferColorSampleCounts),
+        static_cast<std::uint32_t>(physicalDeviceProperties.limits.framebufferDepthSampleCounts)));
+
+    auto candidateSampleCounts = {
+        vk::SampleCountFlagBits::e64, vk::SampleCountFlagBits::e32,
+        vk::SampleCountFlagBits::e16, vk::SampleCountFlagBits::e8,
+        vk::SampleCountFlagBits::e4, vk::SampleCountFlagBits::e2
+    };
+
+    for (auto candidate : candidateSampleCounts) {
+        if (counts & candidate) {
+            return candidate;
+        }
+    }
+    return vk::SampleCountFlagBits::e1;
+}
+
 ou::ImageObject ou::makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool,
-    vk::Queue queue, vk::Extent2D extent)
+    vk::Queue queue, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount)
 {
     vk::Format depthFormat = [&]() {
         auto candidateFormats = { vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint };
@@ -1223,7 +1269,7 @@ ou::ImageObject ou::makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device
     }();
 
     // create image object
-    ImageObject depth = makeImage(physicalDevice, device, 1, extent, depthFormat,
+    ImageObject depth = makeImage(physicalDevice, device, sampleCount, 1, extent, depthFormat,
         vk::ImageUsageFlagBits::eDepthStencilAttachment);
 
     // make it a depth buffer
@@ -1231,4 +1277,16 @@ ou::ImageObject ou::makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device
         vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
 
     return depth;
+}
+
+ou::ImageObject ou::makeMultiSampleImage(vk::PhysicalDevice physicalDevice, vk::Device device, VkCommandPool commandPool,
+    vk::Queue queue, vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount)
+{
+    ImageObject image = makeImage(physicalDevice, device, sampleCount, 1,
+        extent, imageFormat, vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment);
+
+    transitionImageLayout(device, commandPool, queue, image.image.get(),
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
+
+    return image;
 }

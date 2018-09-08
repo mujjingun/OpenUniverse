@@ -96,15 +96,23 @@ VulkanApplication::VulkanApplication()
     m_commandPool = makeCommandPool(m_device.get(), queueFamilies.graphicsFamilyIndex);
     m_commandBuffers = allocateCommandBuffers(m_device.get(), m_commandPool.get(), swapchainImageCount);
 
+    // make multisampling buffer
+    const vk::SampleCountFlagBits sampleCount = getMaxUsableSampleCount(physicalDevice);
+    ImageObject multiSample = makeMultiSampleImage(physicalDevice, m_device.get(), m_commandPool.get(),
+        m_graphicsQueue, m_swapchainProps.surfaceFormat.format, m_swapchainProps.extent, sampleCount);
+    m_multiSampleImage = std::move(multiSample.image);
+    m_multiSampleImageMemory = std::move(multiSample.imageMemory);
+    m_multiSampleImageView = std::move(multiSample.imageView);
+
     // make depth buffer
     ImageObject depth = makeDepthImage(physicalDevice, m_device.get(), m_commandPool.get(),
-        m_graphicsQueue, m_swapchainProps.extent);
+        m_graphicsQueue, m_swapchainProps.extent, sampleCount);
     m_depthImage = std::move(depth.image);
     m_depthImageMemory = std::move(depth.imageMemory);
     m_depthImageView = std::move(depth.imageView);
 
     // make render pass
-    m_renderPass = makeRenderPass(m_device.get(), m_swapchainProps.surfaceFormat.format, depth.format);
+    m_renderPass = makeRenderPass(m_device.get(), sampleCount, m_swapchainProps.surfaceFormat.format, depth.format);
 
     // make description set layout, pool, and sets
     m_descriptorSetLayout = makeDescriptorSetLayout(m_device.get());
@@ -115,10 +123,11 @@ VulkanApplication::VulkanApplication()
     // make pipeline
     m_pipelineLayout = makePipelineLayout(m_device.get(), m_descriptorSetLayout.get());
     m_graphicsPipeline = makePipeline(m_device.get(), m_pipelineLayout.get(), m_swapchainProps.extent, m_renderPass.get(),
-        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+        sampleCount, Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
 
     // make framebuffers
-    m_framebuffers = makeFramebuffers(m_device.get(), m_swapchainImageViews, m_depthImageView.get(),
+    m_framebuffers = makeFramebuffers(m_device.get(),
+        m_swapchainImageViews, m_depthImageView.get(), m_multiSampleImageView.get(),
         m_renderPass.get(), m_swapchainProps.extent);
 
     // make semaphores for synchronizing frame drawing operations
@@ -278,14 +287,16 @@ void VulkanApplication::drawFrame()
     // 2. Execute the command buffer with that image as attachment in the framebuffer
     // 3. Return the image to the swap chain for presentation
 
+    const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
+
     std::array<vk::Fence, 1> inFlightFences = { { m_inFlightFences[m_currentFrame].get() } };
-    m_device->waitForFences(inFlightFences, VK_TRUE, std::numeric_limits<std::uint64_t>::max());
+    m_device->waitForFences(inFlightFences, VK_TRUE, timeOut);
     m_device->resetFences(inFlightFences);
 
     // acquire next image to write into from the swap chain
     // note: this function is asynchronous
     std::uint32_t imageIndex;
-    m_device->acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<std::uint64_t>::max(),
+    m_device->acquireNextImageKHR(m_swapchain.get(), timeOut,
         m_imageAvailableSemaphores[m_currentFrame].get(), nullptr, &imageIndex);
 
     // update the uniform data

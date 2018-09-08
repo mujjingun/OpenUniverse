@@ -42,6 +42,10 @@ private:
     vk::UniqueCommandPool m_commandPool;
     std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
 
+    vk::UniqueImage m_multiSampleImage;
+    vk::UniqueDeviceMemory m_multiSampleImageMemory;
+    vk::UniqueImageView m_multiSampleImageView;
+
     vk::UniqueImage m_depthImage;
     vk::UniqueDeviceMemory m_depthImageMemory;
     vk::UniqueImageView m_depthImageView;
