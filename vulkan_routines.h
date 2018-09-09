@@ -41,7 +41,7 @@ struct SwapchainProperties {
     vk::SurfaceFormatKHR surfaceFormat;
     vk::PresentModeKHR presentMode;
     vk::Extent2D extent;
-    std::uint32_t minImageCount;
+    std::uint32_t imageCount;
     vk::SurfaceTransformFlagBitsKHR transform;
 };
 
@@ -61,6 +61,7 @@ class GraphicsContext {
 
 public:
     GraphicsContext();
+    GraphicsContext(int width, int height);
 
     // getters
     vk::Device device() const;
@@ -76,7 +77,7 @@ public:
     std::vector<vk::DescriptorSet> makeDescriptorSets(vk::DescriptorPool pool,
         vk::DescriptorSetLayout layout, std::uint32_t size) const;
 
-    vk::UniqueSwapchainKHR makeSwapchain(SwapchainProperties props) const;
+    vk::UniqueSwapchainKHR makeSwapchain(SwapchainProperties props, vk::SwapchainKHR oldSwapchain = nullptr) const;
     std::vector<vk::Image> retrieveSwapchainImages(vk::SwapchainKHR swapchain) const;
 
     vk::UniqueImageView makeImageView(vk::Image image, vk::Format imageFormat,
@@ -104,8 +105,8 @@ public:
         vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
         vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const;
 
-    vk::UniqueSemaphore makeSemaphore() const;
-    vk::UniqueFence makeFence() const;
+    std::vector<vk::UniqueSemaphore> makeSemaphores(std::uint32_t count) const;
+    std::vector<vk::UniqueFence> makeFences(std::uint32_t count) const;
 
     vk::UniqueBuffer makeBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
         vk::SharingMode sharingMode = vk::SharingMode::eExclusive) const;

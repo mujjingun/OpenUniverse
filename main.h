@@ -10,24 +10,24 @@
 namespace ou {
 
 struct SwapchainObject {
-    vk::UniqueSwapchainKHR m_swapchain;
-    std::vector<vk::Image> m_swapchainImages{};
-    std::vector<vk::UniqueImageView> m_swapchainImageViews{};
+    vk::UniqueSwapchainKHR swapchain;
+    std::vector<vk::Image> swapchainImages{};
+    std::vector<vk::UniqueImageView> swapchainImageViews{};
 
-    ImageObject m_multiSampleImage;
-    ImageObject m_depthImage;
+    ImageObject multiSampleImage;
+    ImageObject depthImage;
 
-    vk::UniqueRenderPass m_renderPass;
+    vk::UniqueRenderPass renderPass;
 
-    vk::UniquePipelineLayout m_pipelineLayout;
-    vk::UniquePipeline m_graphicsPipeline;
+    vk::UniquePipelineLayout pipelineLayout;
+    vk::UniquePipeline graphicsPipeline;
 
-    std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
-    std::vector<vk::UniqueFramebuffer> m_framebuffers{};
+    std::vector<vk::UniqueCommandBuffer> commandBuffers{};
+    std::vector<vk::UniqueFramebuffer> framebuffers{};
 
     SwapchainObject() = default;
-    SwapchainObject(GraphicsContext const& context,
-        vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties);
+    SwapchainObject(GraphicsContext const& context, vk::DescriptorSetLayout descriptorSetLayout,
+                    SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain = nullptr);
 };
 
 class VulkanApplication {
@@ -61,11 +61,11 @@ private:
     BufferObject m_vertexBuffer;
     BufferObject m_indexBuffer;
 
-    std::vector<vk::UniqueBuffer> m_uniformBuffers{};
-    std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
-
     ImageObject m_textureImage;
     vk::UniqueSampler m_sampler;
+
+    std::vector<vk::UniqueBuffer> m_uniformBuffers{};
+    std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
 
     std::size_t m_currentFrame = 0;
 

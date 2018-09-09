@@ -343,7 +343,12 @@ vk::UniqueCommandPool ou::makeCommandPool(vk::Device device, std::uint32_t queue
 }
 
 ou::GraphicsContext::GraphicsContext()
-    : m_window(makeWindow(600, 480))
+    : GraphicsContext(600, 480)
+{
+}
+
+ou::GraphicsContext::GraphicsContext(int width, int height)
+    : m_window(makeWindow(width, height))
     , m_instance(makeInstance())
     , m_dispatchLoader(*m_instance)
     , m_messenger(makeDebugMessenger(*m_instance, m_dispatchLoader))
@@ -372,7 +377,7 @@ vk::Device ou::GraphicsContext::device() const
     return *m_device;
 }
 
-GLFWwindow *ou::GraphicsContext::window() const
+GLFWwindow* ou::GraphicsContext::window() const
 {
     return m_window.get();
 }
@@ -457,7 +462,7 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
     }();
 
     // choose number of images to use
-    properties.minImageCount = [&]() {
+    properties.imageCount = [&]() {
         std::uint32_t imageCount = surfaceCapabilities.minImageCount + 1;
         if (surfaceCapabilities.maxImageCount > 0 && imageCount > surfaceCapabilities.maxImageCount) {
             imageCount = surfaceCapabilities.maxImageCount;
@@ -521,11 +526,11 @@ std::vector<vk::DescriptorSet> ou::GraphicsContext::makeDescriptorSets(vk::Descr
     return m_device->allocateDescriptorSets(allocInfo);
 }
 
-vk::UniqueSwapchainKHR ou::GraphicsContext::makeSwapchain(ou::SwapchainProperties props) const
+vk::UniqueSwapchainKHR ou::GraphicsContext::makeSwapchain(ou::SwapchainProperties props, vk::SwapchainKHR oldSwapchain) const
 {
     vk::SwapchainCreateInfoKHR swapChainCreateInfo{};
     swapChainCreateInfo.surface = *m_surface;
-    swapChainCreateInfo.minImageCount = props.minImageCount;
+    swapChainCreateInfo.minImageCount = props.imageCount;
     swapChainCreateInfo.imageFormat = props.surfaceFormat.format;
     swapChainCreateInfo.imageColorSpace = props.surfaceFormat.colorSpace;
     swapChainCreateInfo.imageExtent = props.extent;
@@ -552,7 +557,7 @@ vk::UniqueSwapchainKHR ou::GraphicsContext::makeSwapchain(ou::SwapchainPropertie
     swapChainCreateInfo.preTransform = props.transform;
     swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
     swapChainCreateInfo.clipped = VK_TRUE;
-    swapChainCreateInfo.oldSwapchain = nullptr;
+    swapChainCreateInfo.oldSwapchain = oldSwapchain;
 
     return m_device->createSwapchainKHRUnique(swapChainCreateInfo);
 }
@@ -1043,17 +1048,25 @@ std::vector<vk::UniqueFramebuffer> ou::GraphicsContext::makeFramebuffers(const s
     return framebuffers;
 }
 
-vk::UniqueSemaphore ou::GraphicsContext::makeSemaphore() const
+std::vector<vk::UniqueSemaphore> ou::GraphicsContext::makeSemaphores(uint32_t count) const
 {
-    return m_device->createSemaphoreUnique({});
+    std::vector<vk::UniqueSemaphore> semaphores(count);
+    for (auto& semaphore : semaphores) {
+        semaphore = m_device->createSemaphoreUnique({});
+    }
+    return semaphores;
 }
 
-vk::UniqueFence ou::GraphicsContext::makeFence() const
+std::vector<vk::UniqueFence> ou::GraphicsContext::makeFences(uint32_t count) const
 {
-    vk::FenceCreateInfo fenceInfo{};
-    fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+    std::vector<vk::UniqueFence> fences(count);
+    for (auto& fence : fences) {
+        vk::FenceCreateInfo fenceInfo{};
+        fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
 
-    return m_device->createFenceUnique(fenceInfo);
+        fence = m_device->createFenceUnique(fenceInfo);
+    }
+    return fences;
 }
 
 vk::UniqueBuffer ou::GraphicsContext::makeBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,

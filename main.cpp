@@ -67,82 +67,80 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
-SwapchainObject::SwapchainObject(const GraphicsContext& context,
-    vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties)
+SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorSetLayout descriptorSetLayout,
+                                 SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
 {
     // make swapchain
-    m_swapchain = context.makeSwapchain(properties);
-    m_swapchainImages = context.retrieveSwapchainImages(*m_swapchain);
-    const auto swapchainImageCount = static_cast<std::uint32_t>(m_swapchainImages.size());
-    for (const auto& image : m_swapchainImages) {
-        m_swapchainImageViews.push_back(context.makeImageView(image,
+    swapchain = context.makeSwapchain(properties, oldSwapchain);
+    swapchainImages = context.retrieveSwapchainImages(*swapchain);
+    const auto swapchainImageCount = static_cast<std::uint32_t>(swapchainImages.size());
+    for (const auto& image : swapchainImages) {
+        swapchainImageViews.push_back(context.makeImageView(image,
             properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
     }
 
     // make multisampling buffer
     const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(4);
-    m_multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, sampleCount);
+    multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, sampleCount);
 
     // make depth buffer
-    m_depthImage = context.makeDepthImage(properties.extent, sampleCount);
+    depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
     // make render pass
-    m_renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, m_depthImage.format);
+    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, depthImage.format);
 
     // make pipeline
-    m_pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
-    m_graphicsPipeline = context.makePipeline(*m_pipelineLayout, properties.extent, *m_renderPass,
+    pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
+    graphicsPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass,
         sampleCount, Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
 
     // make command buffers
-    m_commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
+    commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
 
     // make framebuffers
-    m_framebuffers = context.makeFramebuffers(m_swapchainImageViews, *m_depthImage.view,
-        *m_multiSampleImage.view, *m_renderPass, properties.extent);
+    framebuffers = context.makeFramebuffers(swapchainImageViews, *depthImage.view,
+        *multiSampleImage.view, *renderPass, properties.extent);
 }
 
 VulkanApplication::VulkanApplication()
-{
-    // figure out swapchain image count
-    m_swapchainProps = m_context.selectSwapchainProperties();
-    const std::uint32_t swapchainImageCount = m_swapchainProps.minImageCount;
+    : m_context(600, 480)
+
+    // figure out swapchain properties
+    , m_swapchainProps(m_context.selectSwapchainProperties())
 
     // make description set layout, pool, and sets
-    m_descriptorSetLayout = m_context.makeDescriptorSetLayout();
-    m_descriptorPool = m_context.makeDescriptorPool(swapchainImageCount);
-    m_descriptorSets = m_context.makeDescriptorSets(*m_descriptorPool, *m_descriptorSetLayout, swapchainImageCount);
+    , m_descriptorSetLayout(m_context.makeDescriptorSetLayout())
+    , m_descriptorPool(m_context.makeDescriptorPool(m_swapchainProps.imageCount))
+    , m_descriptorSets(m_context.makeDescriptorSets(*m_descriptorPool, *m_descriptorSetLayout, m_swapchainProps.imageCount))
 
     // make swapchain
-    m_swapchain = SwapchainObject(m_context, *m_descriptorSetLayout, m_swapchainProps);
+    , m_swapchain(m_context, *m_descriptorSetLayout, m_swapchainProps)
 
     // make semaphores for synchronizing frame drawing operations
-    for (std::size_t index = 0; index < maxFramesInFlight; ++index) {
-        m_imageAvailableSemaphores.push_back(m_context.makeSemaphore());
-        m_renderFinishedSemaphores.push_back(m_context.makeSemaphore());
-        m_inFlightFences.push_back(m_context.makeFence());
-    }
+    , m_imageAvailableSemaphores(m_context.makeSemaphores(maxFramesInFlight))
+    , m_renderFinishedSemaphores(m_context.makeSemaphores(maxFramesInFlight))
+    , m_inFlightFences(m_context.makeFences(maxFramesInFlight))
 
     // make & fill vertex buffer
-    m_vertexBuffer = m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eVertexBuffer,
-        vertices.data(), vertices.size() * sizeof(vertices[0]));
+    , m_vertexBuffer(m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eVertexBuffer,
+          vertices.data(), vertices.size() * sizeof(vertices[0])))
 
     // make & fill index buffer
-    m_indexBuffer = m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eIndexBuffer,
-        indices.data(), indices.size() * sizeof(indices[0]));
+    , m_indexBuffer(m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eIndexBuffer,
+          indices.data(), indices.size() * sizeof(indices[0])))
 
+    // make textures
+    , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
+
+    // make sampler
+    , m_sampler(m_context.makeTextureSampler())
+{
     // make uniform buffers
-    for (std::uint32_t i = 0; i < swapchainImageCount; ++i) {
+    for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
         m_uniformBuffers.push_back(m_context.makeBuffer(sizeof(UniformBufferObject), vk::BufferUsageFlagBits::eUniformBuffer));
         m_uniformBuffersMemory.push_back(m_context.allocateBufferMemory(*m_uniformBuffers.back(),
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
-
-    // make textures
-    m_textureImage = m_context.makeTextureImage("textures/texture.jpg");
-
-    // make sampler
-    m_sampler = m_context.makeTextureSampler();
 
     // record draw commands
     recordDrawCommands();
@@ -154,7 +152,7 @@ void VulkanApplication::refreshSwapchain()
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
-    m_swapchain = SwapchainObject(m_context, *m_descriptorSetLayout, m_swapchainProps);
+    m_swapchain = SwapchainObject(m_context, *m_descriptorSetLayout, m_swapchainProps, *m_swapchain.swapchain);
 
     // re-record draw commands
     recordDrawCommands();
@@ -163,7 +161,7 @@ void VulkanApplication::refreshSwapchain()
 void VulkanApplication::recordDrawCommands()
 {
     std::size_t index = 0;
-    for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.m_commandBuffers) {
+    for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
         vk::CommandBufferBeginInfo beginInfo{};
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
         beginInfo.pInheritanceInfo = nullptr;
@@ -171,8 +169,8 @@ void VulkanApplication::recordDrawCommands()
         commandBuffer->begin(beginInfo);
 
         vk::RenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.renderPass = *m_swapchain.m_renderPass;
-        renderPassInfo.framebuffer = *m_swapchain.m_framebuffers[index];
+        renderPassInfo.renderPass = *m_swapchain.renderPass;
+        renderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
         renderPassInfo.renderArea.offset.x = 0;
         renderPassInfo.renderArea.offset.y = 0;
         renderPassInfo.renderArea.extent = m_swapchainProps.extent;
@@ -194,7 +192,7 @@ void VulkanApplication::recordDrawCommands()
 
         commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
-        commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.m_graphicsPipeline);
+        commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.graphicsPipeline);
 
         commandBuffer->bindVertexBuffers(0, { *m_vertexBuffer.buffer }, { 0 });
 
@@ -228,7 +226,7 @@ void VulkanApplication::recordDrawCommands()
 
         m_context.device().updateDescriptorSets(descriptorWrites, {});
 
-        commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.m_pipelineLayout, 0,
+        commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
             { m_descriptorSets[index] }, {});
 
         commandBuffer->drawIndexed(static_cast<std::uint32_t>(indices.size()), 1, 0, 0, 0);
@@ -285,7 +283,7 @@ void VulkanApplication::drawFrame()
     // acquire next image to write into from the swap chain
     // note: this function is asynchronous
     std::uint32_t imageIndex;
-    m_context.device().acquireNextImageKHR(*m_swapchain.m_swapchain, timeOut,
+    m_context.device().acquireNextImageKHR(*m_swapchain.swapchain, timeOut,
         *m_imageAvailableSemaphores[m_currentFrame], nullptr, &imageIndex);
 
     // update the uniform data
@@ -316,7 +314,7 @@ void VulkanApplication::drawFrame()
     submitInfo.pWaitSemaphores = imageAvailableSemaphores.data();
     submitInfo.pWaitDstStageMask = &waitStage;
 
-    std::array<vk::CommandBuffer, 1> commandBuffers = { { *m_swapchain.m_commandBuffers[imageIndex] } };
+    std::array<vk::CommandBuffer, 1> commandBuffers = { { *m_swapchain.commandBuffers[imageIndex] } };
     submitInfo.commandBufferCount = commandBuffers.size();
     submitInfo.pCommandBuffers = commandBuffers.data();
 
@@ -332,7 +330,7 @@ void VulkanApplication::drawFrame()
     presentInfo.waitSemaphoreCount = renderFinishedSemaphores.size();
     presentInfo.pWaitSemaphores = renderFinishedSemaphores.data();
 
-    std::array<vk::SwapchainKHR, 1> swapchains = { { *m_swapchain.m_swapchain } };
+    std::array<vk::SwapchainKHR, 1> swapchains = { { *m_swapchain.swapchain } };
     presentInfo.swapchainCount = swapchains.size();
     presentInfo.pSwapchains = swapchains.data();
     presentInfo.pImageIndices = &imageIndex;
