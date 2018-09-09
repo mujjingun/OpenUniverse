@@ -227,7 +227,7 @@ void main(void)
 
     if (noise < 0.1f) {
         outPos = pos;
-        outColor = vec3(0.2f, 0.2f, 1.0f);
+        outColor = vec3(0.2f, 0.2f, 0.9f);
     }
     else {
         outPos = pos * (1.0f + vec3(noise * 0.02f));

@@ -19,7 +19,7 @@ static const bool enableValidationLayers =
     true;
 #endif
 
-ou::UniqueWindow ou::makeWindow(int width, int height)
+ou::UniqueWindow ou::makeWindow(int width, int height, bool fullscreen)
 {
     // initialize glfw context
     glfwInit();
@@ -30,8 +30,16 @@ ou::UniqueWindow ou::makeWindow(int width, int height)
     // disable window resizing
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
+    const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+
     // create window
-    GLFWwindow* window = glfwCreateWindow(width, height, "OpenUniverse on Vulkan", nullptr, nullptr);
+    GLFWwindow* window;
+    if (fullscreen) {
+        window = glfwCreateWindow(mode->width, mode->height, "OpenUniverse on Vulkan",
+            glfwGetPrimaryMonitor(), nullptr);
+    } else {
+        window = glfwCreateWindow(width, height, "OpenUniverse on Vulkan", nullptr, nullptr);
+    }
 
     std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)> uniqueWindow(window, [](GLFWwindow* window) {
         glfwDestroyWindow(window);
@@ -345,12 +353,13 @@ vk::UniqueCommandPool ou::makeCommandPool(vk::Device device, std::uint32_t queue
 }
 
 ou::GraphicsContext::GraphicsContext()
-    : GraphicsContext(600, 480)
+    : GraphicsContext(600, 480, false)
 {
 }
 
-ou::GraphicsContext::GraphicsContext(int width, int height)
-    : m_window(makeWindow(width, height))
+ou::GraphicsContext::GraphicsContext(int width, int height, bool fullscreen)
+    : m_window(makeWindow(width, height, fullscreen))
+    , m_videoMode(glfwGetVideoMode(glfwGetPrimaryMonitor()))
     , m_instance(makeInstance())
     , m_dispatchLoader(*m_instance)
     , m_messenger(makeDebugMessenger(*m_instance, m_dispatchLoader))
@@ -392,6 +401,17 @@ vk::Queue ou::GraphicsContext::graphicsQueue() const
 vk::Queue ou::GraphicsContext::presentQueue() const
 {
     return m_presentQueue;
+}
+
+int ou::GraphicsContext::refreshRate() const
+{
+    return m_videoMode->refreshRate;
+}
+
+vk::Extent2D ou::GraphicsContext::screenResolution() const
+{
+    return { static_cast<std::uint32_t>(m_videoMode->width),
+        static_cast<std::uint32_t>(m_videoMode->height) };
 }
 
 ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const

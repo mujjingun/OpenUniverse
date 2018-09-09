@@ -15,7 +15,7 @@
 namespace ou {
 
 using UniqueWindow = std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)>;
-UniqueWindow makeWindow(int width, int height);
+UniqueWindow makeWindow(int width, int height, bool fullscreen);
 
 vk::UniqueInstance makeInstance();
 
@@ -61,13 +61,15 @@ class GraphicsContext {
 
 public:
     GraphicsContext();
-    GraphicsContext(int width, int height);
+    GraphicsContext(int width, int height, bool fullscreen);
 
     // getters
     vk::Device device() const;
     GLFWwindow* window() const;
     vk::Queue graphicsQueue() const;
     vk::Queue presentQueue() const;
+    int refreshRate() const;
+    vk::Extent2D screenResolution() const;
 
     // member functions
     SwapchainProperties selectSwapchainProperties() const;
@@ -126,6 +128,7 @@ public:
 
 private:
     UniqueWindow m_window;
+    const GLFWvidmode* m_videoMode;
 
     vk::UniqueInstance m_instance;
 

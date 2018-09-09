@@ -55,6 +55,7 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::vec3 eyePos;
 };
 
 SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorSetLayout descriptorSetLayout,
@@ -118,7 +119,7 @@ static std::uint64_t hash(std::uint64_t seed)
 }
 
 VulkanApplication::VulkanApplication()
-    : m_context(600, 480)
+    : m_context(600, 480, true)
 
     // figure out swapchain properties
     , m_swapchainProps(m_context.selectSwapchainProperties())
@@ -177,7 +178,7 @@ VulkanApplication::VulkanApplication()
     };
 
     // do subdivision iterations
-    for (int iter = 0; iter < 0; ++iter) {
+    for (int iter = 0; iter < 4; ++iter) {
         const auto indicesCount = indices.size();
         std::vector<std::uint64_t> newIndices;
         for (std::size_t i = 0; i < indicesCount; i += 3) {
@@ -347,7 +348,8 @@ void VulkanApplication::run()
     // main loop
     while (!glfwWindowShouldClose(m_context.window())) {
         const auto currentTime = system_clock::now();
-        if (currentTime - m_lastFrameTime < milliseconds(16)) continue;
+        const double frameInterval = 1.0 / m_context.refreshRate();
+        if (currentTime - m_lastFrameTime < duration<double>(frameInterval)) continue;
 
         glfwPollEvents();
 
@@ -397,8 +399,9 @@ void VulkanApplication::drawFrame()
         float time = duration<float, seconds::period>(system_clock::now() - m_startTime).count();
         UniformBufferObject ubo = {};
         ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.model = glm::scale(ubo.model, glm::vec3(0.5f, 0.5f, 0.5f));
-        ubo.view = glm::lookAt(glm::vec3(1.0f, 1.0f, 1.0f * std::sin(time)), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
+        ubo.eyePos = glm::vec3(1.5f, 1.5f, 5.0f * (std::sin(time / 2.0f) + 1.0f));
+        ubo.view = glm::lookAt(ubo.eyePos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
             0.1f, 10.0f);
