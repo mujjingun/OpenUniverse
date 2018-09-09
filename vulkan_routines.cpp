@@ -1327,8 +1327,3 @@ vk::SampleCountFlagBits ou::GraphicsContext::getMaxUsableSampleCount(uint32_t pr
     }
     return vk::SampleCountFlagBits::e1;
 }
-
-std::chrono::system_clock::time_point ou::getCurrentTimePoint()
-{
-    return std::chrono::system_clock::now();
-}

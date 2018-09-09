@@ -142,8 +142,6 @@ private:
     vk::UniqueCommandPool m_commandPool;
 };
 
-std::chrono::system_clock::time_point getCurrentTimePoint();
-
 } // namespace ou
 
 #endif // VULKAN_ROUTINES_H

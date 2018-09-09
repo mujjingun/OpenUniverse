@@ -67,6 +67,41 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
+SwapchainObject::SwapchainObject(const GraphicsContext& context,
+    vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties)
+{
+    // make swapchain
+    m_swapchain = context.makeSwapchain(properties);
+    m_swapchainImages = context.retrieveSwapchainImages(*m_swapchain);
+    const auto swapchainImageCount = static_cast<std::uint32_t>(m_swapchainImages.size());
+    for (const auto& image : m_swapchainImages) {
+        m_swapchainImageViews.push_back(context.makeImageView(image,
+            properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
+    }
+
+    // make multisampling buffer
+    const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(4);
+    m_multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, sampleCount);
+
+    // make depth buffer
+    m_depthImage = context.makeDepthImage(properties.extent, sampleCount);
+
+    // make render pass
+    m_renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, m_depthImage.format);
+
+    // make pipeline
+    m_pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
+    m_graphicsPipeline = context.makePipeline(*m_pipelineLayout, properties.extent, *m_renderPass,
+        sampleCount, Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+
+    // make command buffers
+    m_commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
+
+    // make framebuffers
+    m_framebuffers = context.makeFramebuffers(m_swapchainImageViews, *m_depthImage.view,
+        *m_multiSampleImage.view, *m_renderPass, properties.extent);
+}
+
 VulkanApplication::VulkanApplication()
 {
     // figure out swapchain image count
@@ -123,41 +158,6 @@ void VulkanApplication::refreshSwapchain()
 
     // re-record draw commands
     recordDrawCommands();
-}
-
-VulkanApplication::SwapchainObject::SwapchainObject(const GraphicsContext& context,
-    vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties)
-{
-    // make swapchain
-    m_swapchain = context.makeSwapchain(properties);
-    m_swapchainImages = context.retrieveSwapchainImages(*m_swapchain);
-    const auto swapchainImageCount = static_cast<std::uint32_t>(m_swapchainImages.size());
-    for (const auto& image : m_swapchainImages) {
-        m_swapchainImageViews.push_back(context.makeImageView(image,
-            properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
-    }
-
-    // make multisampling buffer
-    const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(4);
-    m_multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, sampleCount);
-
-    // make depth buffer
-    m_depthImage = context.makeDepthImage(properties.extent, sampleCount);
-
-    // make render pass
-    m_renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, m_depthImage.format);
-
-    // make pipeline
-    m_pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
-    m_graphicsPipeline = context.makePipeline(*m_pipelineLayout, properties.extent, *m_renderPass,
-        sampleCount, Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
-
-    // make command buffers
-    m_commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
-
-    // make framebuffers
-    m_framebuffers = context.makeFramebuffers(m_swapchainImageViews, *m_depthImage.view,
-        *m_multiSampleImage.view, *m_renderPass, properties.extent);
 }
 
 void VulkanApplication::recordDrawCommands()
@@ -243,7 +243,8 @@ void VulkanApplication::recordDrawCommands()
 
 void VulkanApplication::run()
 {
-    m_startTime = m_lastFpsTimePoint = getCurrentTimePoint();
+    using namespace std::chrono;
+    m_startTime = m_lastFpsTimePoint = system_clock::now();
     m_fpsCounter = 0;
 
     // main loop
@@ -254,14 +255,14 @@ void VulkanApplication::run()
 
         // calculate FPS
         m_fpsCounter++;
-        auto elapsedTime = getCurrentTimePoint() - m_lastFpsTimePoint;
+        const auto currentTime = system_clock::now();
+        const auto elapsedTime = currentTime - m_lastFpsTimePoint;
 
-        using namespace std::chrono;
         if (elapsedTime >= seconds(1)) {
             double fps = static_cast<double>(m_fpsCounter) / duration_cast<seconds>(elapsedTime).count();
             std::cout << "FPS: " << std::fixed << std::setprecision(0) << fps << "\n"; // std::endl;
 
-            m_lastFpsTimePoint = getCurrentTimePoint();
+            m_lastFpsTimePoint = currentTime;
             m_fpsCounter = 0;
         }
     }
@@ -290,7 +291,7 @@ void VulkanApplication::drawFrame()
     // update the uniform data
     {
         using namespace std::chrono;
-        float time = duration<float, seconds::period>(getCurrentTimePoint() - m_startTime).count();
+        float time = duration<float, seconds::period>(system_clock::now() - m_startTime).count();
         UniformBufferObject ubo = {};
         ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.model = glm::scale(ubo.model, glm::vec3(0.2f, 0.2f, 0.2f));

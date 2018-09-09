@@ -9,6 +9,27 @@
 
 namespace ou {
 
+struct SwapchainObject {
+    vk::UniqueSwapchainKHR m_swapchain;
+    std::vector<vk::Image> m_swapchainImages{};
+    std::vector<vk::UniqueImageView> m_swapchainImageViews{};
+
+    ImageObject m_multiSampleImage;
+    ImageObject m_depthImage;
+
+    vk::UniqueRenderPass m_renderPass;
+
+    vk::UniquePipelineLayout m_pipelineLayout;
+    vk::UniquePipeline m_graphicsPipeline;
+
+    std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
+    std::vector<vk::UniqueFramebuffer> m_framebuffers{};
+
+    SwapchainObject() = default;
+    SwapchainObject(GraphicsContext const& context,
+        vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties);
+};
+
 class VulkanApplication {
 
 public:
@@ -31,26 +52,7 @@ private:
     std::vector<vk::DescriptorSet> m_descriptorSets;
 
     // set of elements that need to be recreated when the window gets resized
-    struct SwapchainObject {
-        vk::UniqueSwapchainKHR m_swapchain;
-        std::vector<vk::Image> m_swapchainImages{};
-        std::vector<vk::UniqueImageView> m_swapchainImageViews{};
-
-        ImageObject m_multiSampleImage;
-        ImageObject m_depthImage;
-
-        vk::UniqueRenderPass m_renderPass;
-
-        vk::UniquePipelineLayout m_pipelineLayout;
-        vk::UniquePipeline m_graphicsPipeline;
-
-        std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
-        std::vector<vk::UniqueFramebuffer> m_framebuffers{};
-
-        SwapchainObject() = default;
-        SwapchainObject(GraphicsContext const& context,
-            vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties);
-    } m_swapchain;
+    SwapchainObject m_swapchain;
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
