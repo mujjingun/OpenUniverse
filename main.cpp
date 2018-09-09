@@ -2,6 +2,9 @@
 
 #include <iomanip>
 #include <iostream>
+#include <random>
+#include <unordered_map>
+#include <thread>
 
 namespace ou {
 
@@ -10,7 +13,6 @@ static const std::size_t maxFramesInFlight = 2;
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
-    glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription()
     {
@@ -24,7 +26,7 @@ struct Vertex {
 
     static std::vector<vk::VertexInputAttributeDescription> getAttributeDescriptions()
     {
-        std::vector<vk::VertexInputAttributeDescription> attributeDescriptions(3);
+        std::vector<vk::VertexInputAttributeDescription> attributeDescriptions(2);
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
         attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
@@ -35,31 +37,19 @@ struct Vertex {
         attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
         attributeDescriptions[1].offset = offsetof(Vertex, color);
 
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = vk::Format::eR32G32Sfloat;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
         return attributeDescriptions;
     }
 };
 
-static const std::vector<Vertex> vertices = {
-    { { -0.5f, -0.5f, 0.2f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-    { { 0.5f, -0.5f, 0.2f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-    { { 0.5f, 0.5f, 0.2f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { { -0.5f, 0.5f, 0.2f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
-
-    { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-    { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-    { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
-};
-
-static const std::vector<std::uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
-};
+ModelObject::ModelObject(GraphicsContext const& context,
+    const std::vector<Vertex>& vertices, const std::vector<uint16_t>& indices)
+    : vertexBuffer(context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eVertexBuffer,
+          vertices.data(), vertices.size() * sizeof(vertices[0])))
+    , indexBuffer(context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eIndexBuffer,
+          indices.data(), indices.size() * sizeof(indices[0])))
+    , indexCount(indices.size())
+{
+}
 
 struct UniformBufferObject {
     glm::mat4 model;
@@ -68,7 +58,7 @@ struct UniformBufferObject {
 };
 
 SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorSetLayout descriptorSetLayout,
-                                 SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
+    SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
 {
     // make swapchain
     swapchain = context.makeSwapchain(properties, oldSwapchain);
@@ -91,8 +81,17 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
 
     // make pipeline
     pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
-    graphicsPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass,
-        sampleCount, Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+    graphicsPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, sampleCount,
+        "shaders/vert.spv", "shaders/frag.spv", "shaders/tesc.spv", "shaders/tese.spv",
+        vk::PrimitiveTopology::ePatchList,
+        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+
+    /*
+    graphicsPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, sampleCount,
+        "shaders/vert.spv", "shaders/frag.spv", nullptr, nullptr,// "shaders/tesc.spv", "shaders/tese.spv",
+        vk::PrimitiveTopology::eTriangleList,
+        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+    */
 
     // make command buffers
     commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
@@ -100,6 +99,22 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
     // make framebuffers
     framebuffers = context.makeFramebuffers(swapchainImageViews, *depthImage.view,
         *multiSampleImage.view, *renderPass, properties.extent);
+}
+
+static std::uint64_t hash_combine(std::uint64_t x, std::uint64_t y)
+{
+    if (x < y) {
+        std::swap(x, y);
+    }
+    return x ^= y + 0x9e3779b9 + (x << 6) + (x >> 2);
+}
+
+static std::uint64_t hash(std::uint64_t seed)
+{
+    static std::mt19937 gen{};
+    static std::uniform_int_distribution<std::uint64_t> dist(0, std::numeric_limits<uint64_t>::max());
+    gen.seed(seed);
+    return dist(gen);
 }
 
 VulkanApplication::VulkanApplication()
@@ -121,20 +136,104 @@ VulkanApplication::VulkanApplication()
     , m_renderFinishedSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_inFlightFences(m_context.makeFences(maxFramesInFlight))
 
-    // make & fill vertex buffer
-    , m_vertexBuffer(m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eVertexBuffer,
-          vertices.data(), vertices.size() * sizeof(vertices[0])))
-
-    // make & fill index buffer
-    , m_indexBuffer(m_context.constructDeviceLocalBuffer(vk::BufferUsageFlagBits::eIndexBuffer,
-          indices.data(), indices.size() * sizeof(indices[0])))
-
     // make textures
     , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
 
     // make sampler
     , m_sampler(m_context.makeTextureSampler())
 {
+    // describes an icosahedron
+    const float phi = (1.0f + std::sqrt(5.0f)) / 2.0f;
+    const float normFactor = std::sqrt(1 + phi * phi);
+    const float a = 1 / normFactor, b = phi / normFactor;
+    std::unordered_map<std::uint64_t, Vertex> vertices = {
+        { hash(0), { { 0.0f, +a, +b }, { 1.0f, 1.0f, 1.0f } } },
+        { hash(1), { { 0.0f, +a, -b }, { 1.0f, 1.0f, 0.5f } } },
+        { hash(2), { { 0.0f, -a, +b }, { 1.0f, 0.5f, 1.0f } } },
+        { hash(3), { { 0.0f, -a, -b }, { 1.0f, 0.5f, 0.5f } } },
+        { hash(4), { { +a, +b, 0.0f }, { 0.5f, 1.0f, 1.0f } } },
+        { hash(5), { { +a, -b, 0.0f }, { 0.5f, 1.0f, 0.5f } } },
+        { hash(6), { { -a, +b, 0.0f }, { 0.5f, 0.5f, 1.0f } } },
+        { hash(7), { { -a, -b, 0.0f }, { 0.5f, 0.5f, 0.5f } } },
+        { hash(8), { { +b, 0.0f, +a }, { 1.0f, 1.0f, 1.0f } } },
+        { hash(9), { { +b, 0.0f, -a }, { 1.0f, 1.0f, 0.5f } } },
+        { hash(10), { { -b, 0.0f, +a }, { 1.0f, 0.5f, 1.0f } } },
+        { hash(11), { { -b, 0.0f, -a }, { 1.0f, 0.5f, 0.5f } } },
+    };
+    std::vector<std::uint64_t> indices = {
+        0, 2, 8, 0, 10, 2, 1, 9, 3, 1, 3, 11,
+        4, 6, 0, 4, 1, 6, 5, 2, 7, 5, 7, 3,
+        8, 9, 4, 8, 5, 9, 10, 6, 11, 10, 11, 7,
+        0, 8, 4, 1, 4, 9, 2, 5, 8, 3, 9, 5,
+        0, 6, 10, 1, 11, 6, 2, 10, 7, 3, 7, 11
+    };
+    std::transform(indices.begin(), indices.end(), indices.begin(), hash);
+
+    auto fluc = [](std::uint64_t seed) {
+        static std::mt19937 gen{};
+        static std::normal_distribution<float> dist(1.0f, 0.05f);
+        gen.seed(seed);
+        return dist(gen);
+    };
+
+    // do subdivision iterations
+    for (int iter = 0; iter < 0; ++iter) {
+        const auto indicesCount = indices.size();
+        std::vector<std::uint64_t> newIndices;
+        for (std::size_t i = 0; i < indicesCount; i += 3) {
+            auto id0 = indices[i + 0];
+            auto id1 = indices[i + 1];
+            auto id2 = indices[i + 2];
+            auto id3 = hash_combine(id0, id1);
+            auto id4 = hash_combine(id1, id2);
+            auto id5 = hash_combine(id2, id0);
+
+            auto v0 = vertices[id0];
+            auto v1 = vertices[id1];
+            auto v2 = vertices[id2];
+            Vertex v3{ glm::normalize(.5f * (v0.pos + v1.pos)), .5f * (v0.color + v1.color) };
+            Vertex v4{ glm::normalize(.5f * (v1.pos + v2.pos)), .5f * (v1.color + v2.color) };
+            Vertex v5{ glm::normalize(.5f * (v2.pos + v0.pos)), .5f * (v2.color + v0.color) };
+
+            vertices.insert({ id3, v3 });
+            vertices.insert({ id4, v4 });
+            vertices.insert({ id5, v5 });
+
+            newIndices.push_back(id0);
+            newIndices.push_back(id3);
+            newIndices.push_back(id5);
+
+            newIndices.push_back(id3);
+            newIndices.push_back(id1);
+            newIndices.push_back(id4);
+
+            newIndices.push_back(id5);
+            newIndices.push_back(id4);
+            newIndices.push_back(id2);
+
+            newIndices.push_back(id3);
+            newIndices.push_back(id4);
+            newIndices.push_back(id5);
+        }
+        indices = std::move(newIndices);
+    }
+
+    std::uint16_t index = 0;
+    std::vector<Vertex> vertexVec(vertices.size());
+    std::unordered_map<std::uint64_t, std::uint16_t> idToIndexMap;
+    for (auto const& v : vertices) {
+        vertexVec[index] = v.second;
+        idToIndexMap.insert({ v.first, index });
+        index++;
+    }
+    std::vector<uint16_t> indexVec;
+    for (std::uint64_t id : indices) {
+        indexVec.push_back(idToIndexMap[id]);
+    }
+    std::cout << "vertex count: " << indices.size() << std::endl;
+
+    m_model = ModelObject(m_context, vertexVec, indexVec);
+
     // make uniform buffers
     for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
         m_uniformBuffers.push_back(m_context.makeBuffer(sizeof(UniformBufferObject), vk::BufferUsageFlagBits::eUniformBuffer));
@@ -194,9 +293,9 @@ void VulkanApplication::recordDrawCommands()
 
         commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.graphicsPipeline);
 
-        commandBuffer->bindVertexBuffers(0, { *m_vertexBuffer.buffer }, { 0 });
+        commandBuffer->bindVertexBuffers(0, { *m_model.vertexBuffer.buffer }, { 0 });
 
-        commandBuffer->bindIndexBuffer(*m_indexBuffer.buffer, 0, vk::IndexType::eUint16);
+        commandBuffer->bindIndexBuffer(*m_model.indexBuffer.buffer, 0, vk::IndexType::eUint16);
 
         // bind uniform descriptor sets
         vk::DescriptorBufferInfo bufferInfo{};
@@ -229,7 +328,7 @@ void VulkanApplication::recordDrawCommands()
         commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
             { m_descriptorSets[index] }, {});
 
-        commandBuffer->drawIndexed(static_cast<std::uint32_t>(indices.size()), 1, 0, 0, 0);
+        commandBuffer->drawIndexed(static_cast<std::uint32_t>(m_model.indexCount), 1, 0, 0, 0);
 
         commandBuffer->endRenderPass();
 
@@ -242,29 +341,35 @@ void VulkanApplication::recordDrawCommands()
 void VulkanApplication::run()
 {
     using namespace std::chrono;
-    m_startTime = m_lastFpsTimePoint = system_clock::now();
-    m_fpsCounter = 0;
+    m_startTime = m_lastFpsTime = system_clock::now();
+    m_fpsFrameCounter = m_fpsMeasurementsCount = 0;
 
     // main loop
     while (!glfwWindowShouldClose(m_context.window())) {
+        const auto currentTime = system_clock::now();
+        if (currentTime - m_lastFrameTime < milliseconds(16)) continue;
+
         glfwPollEvents();
 
         drawFrame();
 
         // calculate FPS
-        m_fpsCounter++;
-        const auto currentTime = system_clock::now();
-        const auto elapsedTime = currentTime - m_lastFpsTimePoint;
+        m_fpsFrameCounter++;
+        const auto elapsedTime = currentTime - m_lastFpsTime;
 
         if (elapsedTime >= seconds(1)) {
-            double fps = static_cast<double>(m_fpsCounter) / duration_cast<seconds>(elapsedTime).count();
-            std::cout << "FPS: " << std::fixed << std::setprecision(0) << fps << "\n"; // std::endl;
+            double fps = static_cast<double>(m_fpsFrameCounter) / duration_cast<seconds>(elapsedTime).count();
+            m_averageFps = (m_averageFps * m_fpsMeasurementsCount + fps) / (m_fpsMeasurementsCount + 1);
 
-            m_lastFpsTimePoint = currentTime;
-            m_fpsCounter = 0;
+            m_lastFpsTime = currentTime;
+            m_fpsFrameCounter = 0;
+            m_fpsMeasurementsCount++;
         }
+
+        m_lastFrameTime = currentTime;
     }
 
+    std::cout << "Average fps: " << std::setprecision(0) << std::fixed << m_averageFps << std::endl;
     m_context.device().waitIdle();
 }
 
@@ -292,9 +397,8 @@ void VulkanApplication::drawFrame()
         float time = duration<float, seconds::period>(system_clock::now() - m_startTime).count();
         UniformBufferObject ubo = {};
         ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.model = glm::scale(ubo.model, glm::vec3(0.2f, 0.2f, 0.2f));
-        ubo.view = glm::lookAt(glm::vec3(0.3f, 0.3f, 0.3f),
-            glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.model = glm::scale(ubo.model, glm::vec3(0.5f, 0.5f, 0.5f));
+        ubo.view = glm::lookAt(glm::vec3(1.0f, 1.0f, 1.0f * std::sin(time)), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
             0.1f, 10.0f);

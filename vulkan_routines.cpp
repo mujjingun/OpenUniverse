@@ -313,6 +313,8 @@ vk::UniqueDevice ou::makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDe
 
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
+    deviceFeatures.tessellationShader = VK_TRUE;
+    deviceFeatures.shaderTessellationAndGeometryPointSize = VK_TRUE;
 
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredDeviceExtensions.size());
@@ -482,7 +484,9 @@ vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout() con
     layoutBindings[0].binding = 0;
     layoutBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
     layoutBindings[0].descriptorCount = 1;
-    layoutBindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    layoutBindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex
+        | vk::ShaderStageFlagBits::eTessellationControl
+        | vk::ShaderStageFlagBits::eTessellationEvaluation;
     layoutBindings[0].pImmutableSamplers = nullptr;
 
     layoutBindings[1].binding = 1;
@@ -895,22 +899,49 @@ static vk::UniqueShaderModule createShaderModule(vk::Device device, std::vector<
 }
 
 vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
-    vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount, vk::VertexInputBindingDescription bindingDescription,
+    vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
+    const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
+    vk::PrimitiveTopology primitiveType,
+    vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const
 {
     // make shaders
-    vk::UniqueShaderModule vertShaderModule = createShaderModule(*m_device, readFile("shaders/vert.spv"));
-    vk::UniqueShaderModule fragShaderModule = createShaderModule(*m_device, readFile("shaders/frag.spv"));
+    vk::UniqueShaderModule vertShaderModule = createShaderModule(*m_device, readFile(vertexShaderFile));
+    vk::UniqueShaderModule fragShaderModule = createShaderModule(*m_device, readFile(fragmentShaderFile));
 
-    std::array<vk::PipelineShaderStageCreateInfo, 2> shaderStages{};
+    std::vector<vk::PipelineShaderStageCreateInfo> shaderStages;
 
-    shaderStages[0].stage = vk::ShaderStageFlagBits::eVertex;
-    shaderStages[0].module = vertShaderModule.get();
-    shaderStages[0].pName = "main";
+    vk::PipelineShaderStageCreateInfo vertexShaderStage;
+    vertexShaderStage.stage = vk::ShaderStageFlagBits::eVertex;
+    vertexShaderStage.module = vertShaderModule.get();
+    vertexShaderStage.pName = "main";
+    shaderStages.push_back(vertexShaderStage);
 
-    shaderStages[1].stage = vk::ShaderStageFlagBits::eFragment;
-    shaderStages[1].module = fragShaderModule.get();
-    shaderStages[1].pName = "main";
+    vk::PipelineShaderStageCreateInfo fragmentShaderStage;
+    fragmentShaderStage.stage = vk::ShaderStageFlagBits::eFragment;
+    fragmentShaderStage.module = fragShaderModule.get();
+    fragmentShaderStage.pName = "main";
+    shaderStages.push_back(fragmentShaderStage);
+
+    // add tessellation shaders if they are given
+    vk::UniqueShaderModule tcShaderModule;
+    vk::UniqueShaderModule teShaderModule;
+    if (tcShaderFile && teShaderFile) {
+        tcShaderModule = createShaderModule(*m_device, readFile(tcShaderFile));
+        teShaderModule = createShaderModule(*m_device, readFile(teShaderFile));
+
+        vk::PipelineShaderStageCreateInfo tcShaderStage;
+        tcShaderStage.stage = vk::ShaderStageFlagBits::eTessellationControl;
+        tcShaderStage.module = tcShaderModule.get();
+        tcShaderStage.pName = "main";
+        shaderStages.push_back(tcShaderStage);
+
+        vk::PipelineShaderStageCreateInfo teShaderStage;
+        teShaderStage.stage = vk::ShaderStageFlagBits::eTessellationEvaluation;
+        teShaderStage.module = teShaderModule.get();
+        teShaderStage.pName = "main";
+        shaderStages.push_back(teShaderStage);
+    }
 
     // build the pipeline
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -920,7 +951,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.topology = primitiveType;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
     vk::Viewport viewport{};
@@ -947,6 +978,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
+
     rasterizer.cullMode = vk::CullModeFlagBits::eBack;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
@@ -990,8 +1022,11 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 
+    vk::PipelineTessellationStateCreateInfo tessInfo{};
+    tessInfo.patchControlPoints = 3;
+
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.stageCount = shaderStages.size();
+    pipelineInfo.stageCount = static_cast<std::uint32_t>(shaderStages.size());
     pipelineInfo.pStages = shaderStages.data();
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
@@ -1000,6 +1035,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pTessellationState = &tessInfo;
     pipelineInfo.pDynamicState = nullptr;
 
     pipelineInfo.layout = pipelineLayout;

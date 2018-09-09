@@ -65,7 +65,7 @@ public:
 
     // getters
     vk::Device device() const;
-    GLFWwindow *window() const;
+    GLFWwindow* window() const;
     vk::Queue graphicsQueue() const;
     vk::Queue presentQueue() const;
 
@@ -95,9 +95,12 @@ public:
 
     vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
 
-    vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass,
-        vk::SampleCountFlagBits sampleCount, vk::VertexInputBindingDescription bindingDescription,
-        std::vector<vk::VertexInputAttributeDescription> const& attributeDescriptions) const;
+    vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
+        vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
+        const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
+        vk::PrimitiveTopology primitiveType,
+        vk::VertexInputBindingDescription bindingDescription,
+        const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const;
 
     std::vector<vk::UniqueCommandBuffer> allocateCommandBuffers(std::uint32_t count) const;
 
