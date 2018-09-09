@@ -17,64 +17,52 @@ public:
     void run();
 
 private:
+    void refreshSwapchain();
     void recordDrawCommands();
     void drawFrame();
 
 private:
     // graphics stuff
-    std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)> m_window;
-
-    vk::UniqueInstance m_instance;
-    vk::DispatchLoaderDynamic m_dispatchLoader;
-    vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> m_callback;
-
-    vk::UniqueSurfaceKHR m_surface;
-
-    vk::UniqueDevice m_device;
-    vk::Queue m_graphicsQueue;
-    vk::Queue m_presentQueue;
-
+    GraphicsContext m_context;
     SwapchainProperties m_swapchainProps;
-    vk::UniqueSwapchainKHR m_swapchain;
-    std::vector<vk::Image> m_swapchainImages{};
-    std::vector<vk::UniqueImageView> m_swapchainImageViews{};
 
-    vk::UniqueCommandPool m_commandPool;
-    std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
-
-    vk::UniqueImage m_multiSampleImage;
-    vk::UniqueDeviceMemory m_multiSampleImageMemory;
-    vk::UniqueImageView m_multiSampleImageView;
-
-    vk::UniqueImage m_depthImage;
-    vk::UniqueDeviceMemory m_depthImageMemory;
-    vk::UniqueImageView m_depthImageView;
-
-    vk::UniqueRenderPass m_renderPass;
     vk::UniqueDescriptorSetLayout m_descriptorSetLayout;
     vk::UniqueDescriptorPool m_descriptorPool;
-    std::vector<vk::UniqueDescriptorSet> m_descriptorSets;
-    vk::UniquePipelineLayout m_pipelineLayout;
-    vk::UniquePipeline m_graphicsPipeline;
+    std::vector<vk::DescriptorSet> m_descriptorSets;
 
-    std::vector<vk::UniqueFramebuffer> m_framebuffers{};
+    // set of elements that need to be recreated when the window gets resized
+    struct SwapchainObject {
+        vk::UniqueSwapchainKHR m_swapchain;
+        std::vector<vk::Image> m_swapchainImages{};
+        std::vector<vk::UniqueImageView> m_swapchainImageViews{};
+
+        ImageObject m_multiSampleImage;
+        ImageObject m_depthImage;
+
+        vk::UniqueRenderPass m_renderPass;
+
+        vk::UniquePipelineLayout m_pipelineLayout;
+        vk::UniquePipeline m_graphicsPipeline;
+
+        std::vector<vk::UniqueCommandBuffer> m_commandBuffers{};
+        std::vector<vk::UniqueFramebuffer> m_framebuffers{};
+
+        SwapchainObject() = default;
+        SwapchainObject(GraphicsContext const& context,
+            vk::DescriptorSetLayout descriptorSetLayout, SwapchainProperties const& properties);
+    } m_swapchain;
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
     std::vector<vk::UniqueFence> m_inFlightFences;
 
-    vk::UniqueBuffer m_vertexBuffer;
-    vk::UniqueDeviceMemory m_vertexBufferMemory;
-    vk::UniqueBuffer m_indexBuffer;
-    vk::UniqueDeviceMemory m_indexBufferMemory;
+    BufferObject m_vertexBuffer;
+    BufferObject m_indexBuffer;
 
     std::vector<vk::UniqueBuffer> m_uniformBuffers{};
     std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
 
-    std::uint32_t m_mipLevels;
-    vk::UniqueImage m_textureImage;
-    vk::UniqueDeviceMemory m_textureImageMemory;
-    vk::UniqueImageView m_textureImageView;
+    ImageObject m_textureImage;
     vk::UniqueSampler m_sampler;
 
     std::size_t m_currentFrame = 0;

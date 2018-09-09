@@ -14,25 +14,28 @@
 
 namespace ou {
 
-std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)> makeWindow(int width, int height);
+using UniqueWindow = std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)>;
+UniqueWindow makeWindow(int width, int height);
 
 vk::UniqueInstance makeInstance();
 
-vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> makeDebugMessenger(
-    vk::Instance instance, vk::DispatchLoaderDynamic const& dispatchLoader);
+using UniqueDebugMessenger = vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic>;
+UniqueDebugMessenger makeDebugMessenger(vk::Instance instance, vk::DispatchLoaderDynamic const& dispatchLoader);
 
 vk::UniqueSurfaceKHR makeSurface(GLFWwindow* window, vk::Instance instance);
 
 vk::PhysicalDevice selectPhysicalDevice(vk::Instance instance);
 
 struct QueueFamilyIndices {
-    std::uint32_t graphicsFamilyIndex;
-    std::uint32_t presentFamilyIndex;
+    std::uint32_t graphics;
+    std::uint32_t presentation;
 };
 
 QueueFamilyIndices selectQueueFamilyIndices(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface);
 
 vk::UniqueDevice makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDevice physicalDevice);
+
+vk::UniqueCommandPool makeCommandPool(vk::Device device, std::uint32_t queueFamilyIndex);
 
 struct SwapchainProperties {
     vk::SurfaceFormatKHR surfaceFormat;
@@ -42,84 +45,104 @@ struct SwapchainProperties {
     vk::SurfaceTransformFlagBitsKHR transform;
 };
 
-SwapchainProperties selectSwapchainProperties(
-    vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface, GLFWwindow* window);
-
-vk::UniqueSwapchainKHR makeSwapchain(
-    SwapchainProperties props, QueueFamilyIndices queueFamilies, vk::SurfaceKHR surface, vk::Device device);
-
-std::vector<vk::Image> retrieveSwapchainImages(vk::Device device, vk::SwapchainKHR swapchain);
-
-vk::UniqueImageView makeImageView(vk::Device device, vk::Image image, vk::Format imageFormat,
-    vk::ImageAspectFlags imageType, uint32_t mipLevels);
-
-vk::UniqueRenderPass makeRenderPass(vk::Device device, vk::SampleCountFlagBits sampleCount,
-    vk::Format imageFormat, vk::Format depthFormat);
-
-vk::UniquePipelineLayout makePipelineLayout(vk::Device device, vk::DescriptorSetLayout descriptorSetLayout);
-
-vk::UniquePipeline makePipeline(vk::Device device, vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
-    vk::VertexInputBindingDescription bindingDescription,
-    std::vector<vk::VertexInputAttributeDescription> attributeDescriptions);
-
-std::vector<vk::UniqueFramebuffer> makeFramebuffers(vk::Device device,
-    std::vector<vk::UniqueImageView> const& imageViews, vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
-    vk::RenderPass renderPass, vk::Extent2D swapChainExtent);
-
-vk::UniqueCommandPool makeCommandPool(vk::Device device, std::uint32_t queueFamilyIndex);
-
-std::vector<vk::UniqueCommandBuffer> allocateCommandBuffers(vk::Device device, vk::CommandPool commandPool, std::uint32_t count);
-
-vk::UniqueSemaphore makeSemaphore(vk::Device device);
-
-vk::UniqueFence makeFence(vk::Device device);
-
-vk::UniqueBuffer makeBuffer(vk::Device device, vk::DeviceSize size, vk::BufferUsageFlags usage,
-    vk::SharingMode sharingMode = vk::SharingMode::eExclusive);
-
-vk::UniqueDeviceMemory allocateBufferMemory(vk::PhysicalDevice physicalDevice, vk::Device device, vk::Buffer buffer,
-    vk::MemoryPropertyFlags properties);
+struct ImageObject {
+    vk::UniqueImage image;
+    vk::UniqueDeviceMemory memory;
+    vk::UniqueImageView view;
+    vk::Format format;
+};
 
 struct BufferObject {
     vk::UniqueBuffer buffer;
     vk::UniqueDeviceMemory bufferMemory;
 };
 
-BufferObject constructDeviceLocalBuffer(vk::PhysicalDevice physicalDevice, vk::Device device,
-    vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::BufferUsageFlags usageFlags,
-    const void* bufferData, std::size_t bufferSize);
+class GraphicsContext {
 
-vk::UniqueDescriptorSetLayout makeDescriptorSetLayout(vk::Device device);
+public:
+    GraphicsContext();
 
-std::chrono::system_clock::time_point getCurrentTimePoint();
+    // getters
+    vk::Device device() const;
+    GLFWwindow *window() const;
+    vk::Queue graphicsQueue() const;
+    vk::Queue presentQueue() const;
 
-vk::UniqueDescriptorPool makeDescriptorPool(vk::Device device, std::uint32_t size);
+    // member functions
+    SwapchainProperties selectSwapchainProperties() const;
 
-std::vector<vk::UniqueDescriptorSet> makeDescriptorSets(vk::Device device, vk::DescriptorPool pool,
-    vk::DescriptorSetLayout layout, std::uint32_t size);
+    vk::UniqueDescriptorSetLayout makeDescriptorSetLayout() const;
+    vk::UniqueDescriptorPool makeDescriptorPool(std::uint32_t size) const;
+    std::vector<vk::DescriptorSet> makeDescriptorSets(vk::DescriptorPool pool,
+        vk::DescriptorSetLayout layout, std::uint32_t size) const;
 
-struct ImageObject {
-    vk::UniqueImage image;
-    vk::UniqueDeviceMemory imageMemory;
-    vk::UniqueImageView imageView;
-    vk::Format format;
+    vk::UniqueSwapchainKHR makeSwapchain(SwapchainProperties props) const;
+    std::vector<vk::Image> retrieveSwapchainImages(vk::SwapchainKHR swapchain) const;
+
+    vk::UniqueImageView makeImageView(vk::Image image, vk::Format imageFormat,
+        vk::ImageAspectFlags imageType, uint32_t mipLevels) const;
+
+    ImageObject makeImage(vk::SampleCountFlagBits numSamples, std::uint32_t mipLevels, vk::Extent2D extent,
+        vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlagBits aspect) const;
+
+    ImageObject makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
+
+    ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
+
+    vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount, vk::Format imageFormat,
+        vk::Format depthFormat) const;
+
+    vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
+
+    vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent, vk::RenderPass renderPass,
+        vk::SampleCountFlagBits sampleCount, vk::VertexInputBindingDescription bindingDescription,
+        std::vector<vk::VertexInputAttributeDescription> const& attributeDescriptions) const;
+
+    std::vector<vk::UniqueCommandBuffer> allocateCommandBuffers(std::uint32_t count) const;
+
+    std::vector<vk::UniqueFramebuffer> makeFramebuffers(std::vector<vk::UniqueImageView> const& imageViews,
+        vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
+        vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const;
+
+    vk::UniqueSemaphore makeSemaphore() const;
+    vk::UniqueFence makeFence() const;
+
+    vk::UniqueBuffer makeBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+        vk::SharingMode sharingMode = vk::SharingMode::eExclusive) const;
+
+    vk::UniqueDeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
+
+    BufferObject constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData, std::size_t bufferSize) const;
+
+    ImageObject makeTextureImage(const char* filename) const;
+
+    vk::UniqueSampler makeTextureSampler() const;
+
+    vk::SampleCountFlagBits getMaxUsableSampleCount(uint32_t preferredSampleCount) const;
+
+private:
+    UniqueWindow m_window;
+
+    vk::UniqueInstance m_instance;
+
+    vk::DispatchLoaderDynamic m_dispatchLoader;
+
+    UniqueDebugMessenger m_messenger;
+
+    vk::UniqueSurfaceKHR m_surface;
+
+    vk::PhysicalDevice m_physicalDevice;
+
+    QueueFamilyIndices m_queueIndices;
+
+    vk::UniqueDevice m_device;
+
+    vk::Queue m_graphicsQueue, m_presentQueue;
+
+    vk::UniqueCommandPool m_commandPool;
 };
 
-ImageObject makeImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SampleCountFlagBits numSamples,
-    std::uint32_t mipLevels, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage);
-
-ImageObject makeTextureImage(vk::PhysicalDevice physicalDevice, vk::Device device, const char* filename,
-    vk::CommandPool commandPool, vk::Queue queue);
-
-vk::UniqueSampler makeTextureSampler(vk::Device device);
-
-vk::SampleCountFlagBits getMaxUsableSampleCount(vk::PhysicalDevice physicalDevice);
-
-ImageObject makeDepthImage(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool,
-    vk::Queue queue, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount);
-
-ImageObject makeMultiSampleImage(vk::PhysicalDevice physicalDevice, vk::Device device, VkCommandPool commandPool,
-    vk::Queue queue, vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount);
+std::chrono::system_clock::time_point getCurrentTimePoint();
 
 } // namespace ou
 
