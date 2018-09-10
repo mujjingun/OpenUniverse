@@ -181,7 +181,7 @@ float pnoise(vec3 P, vec3 rep)
 }
 
 
-layout (triangles, equal_spacing, cw) in;
+layout (quads, fractional_even_spacing, ccw) in;
 
 layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -191,10 +191,9 @@ layout(set = 0, binding = 0) uniform UniformBufferObject {
 } ubo;
 
 layout (location = 0) in vec3 inPos[];
-layout (location = 1) in vec3 inColor[];
 
 layout (location = 0) out vec3 outPos;
-layout (location = 1) out vec3 outColor;
+layout (location = 1) out float outColor;
 layout (location = 2) out vec3 outNormal;
 
 out gl_PerVertex {
@@ -203,39 +202,28 @@ out gl_PerVertex {
   float gl_ClipDistance[];
 };
 
-vec2 interpolate2D(vec2 v0, vec2 v1, vec2 v2)
+vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2, vec3 v3)
 {
-    return vec2(gl_TessCoord.x) * v0 + vec2(gl_TessCoord.y) * v1 + vec2(gl_TessCoord.z) * v2;
-}
-
-vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2)
-{
-    return vec3(gl_TessCoord.x) * v0 + vec3(gl_TessCoord.y) * v1 + vec3(gl_TessCoord.z) * v2;
+    const vec3 p0 = mix(v0, v3, gl_TessCoord.x);
+    const vec3 p1 = mix(v1, v2, gl_TessCoord.x);
+    return mix(p0, p1, gl_TessCoord.y);
 }
 
 // The PG subdivided an equilateral triangle into
 // smaller triangles and executes the TES for every generated vertex.
 void main(void)
 {
-    const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2]));
-    const vec3 seed = pos * 2;
-    const float noise = cnoise(seed)
-            + cnoise(seed * 2) / 2
-            + cnoise(seed * 4) / 4
-            + cnoise(seed * 8) / 8
-            + cnoise(seed * 16) / 16;
+    const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
+    const vec3 seed2 = pos * 4 + vec3(10.0f);
+    const float cloudNoise = cnoise(seed2)
+            + cnoise(seed2 * 2) / 2
+            + cnoise(seed2 * 4) / 4
+            + cnoise(seed2 * 8) / 8
+            + cnoise(seed2 * 16) / 16;
+    const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
 
-    if (noise < 0.1f) {
-        outPos = pos;
-        outColor = vec3(0.2f, 0.2f, 0.9f);
-    }
-    else {
-        outPos = pos * (1.0f + vec3(noise * 0.02f));
-        outColor = interpolate3D(inColor[0], inColor[1], inColor[2]);
-    }
-
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(outPos, 1.0f);
+    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(pos * 1.03f, 1.0f);
     outPos = gl_Position.xyz;
-    outNormal = outPos;
-    gl_PointSize = 5.0f;
+    outNormal = (ubo.model * vec4(pos, 0.0f)).xyz;
+    outColor = cloud;
 }

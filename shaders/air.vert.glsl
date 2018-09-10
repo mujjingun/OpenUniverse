@@ -10,10 +10,8 @@ layout(set = 0, binding = 0) uniform UniformBufferObject {
 } ubo;
 
 layout(location = 0) in vec3 inPosition;
-layout(location = 1) in vec3 inColor;
 
 layout(location = 0) out vec3 outPos;
-layout(location = 1) out vec3 outColor;
 
 out gl_PerVertex
 {
@@ -26,5 +24,4 @@ void main() {
     //gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0f);
     //outPos = gl_Position.xyz;
     outPos = inPosition;
-    outColor = inColor;
 }
