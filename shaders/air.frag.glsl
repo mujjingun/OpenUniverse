@@ -120,9 +120,10 @@ layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 seed;
-layout(location = 2) in vec3 vertexToEye;
 
 const vec3 lightDir = normalize(vec3(0, -0.5, 0));
+
+const float thickness = 0.03f;
 
 void main() {
     const float cloudNoise = cnoise(seed)
@@ -132,14 +133,24 @@ void main() {
             + cnoise(seed * 16) / 8;
     const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
 
-    vec3 worldPos = (ubo.model * vec4(inPos, 1.0f)).xyz;
+    vec3 modelPos = normalize(inPos);
+    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     vec3 dX = dFdx(worldPos);
     vec3 dY = dFdy(worldPos);
     vec3 normal = normalize(cross(dX,dY));
     float light = max(0.0, dot(lightDir, normal));
 
-    vec3 lightReflect = normalize(reflect(lightDir, normal));
-    float specularLight = dot(vertexToEye, lightReflect);
-    outColor = vec4(light * vec3(1.0f), cloud);
+    vec3 vertexToEye = normalize(ubo.eyePos - worldPos);
+    float cosine = dot(-vertexToEye, normal);
+    float b = (1.0f + thickness) * cosine;
+    float D = b * b - thickness * (2.0f + thickness);
+    float scatterLength = mix(b - sqrt(max(0, D)), 2.0f * cosine * (1.0f + thickness), smoothstep(0.03, 0.01, D));
+    const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
+    scatterLength /= maxScatterLength;
+    vec4 scatterColor = vec4(0.5f, 0.5f, 1.0f, pow(scatterLength * 0.5, 3));
+    vec4 cloudColor = vec4(vec3(1.0f), cloud);
+    outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
+    outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
+    outColor = vec4(outColor.rgb * light, outColor.a);
 }
 

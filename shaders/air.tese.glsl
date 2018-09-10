@@ -15,7 +15,6 @@ layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;
 layout (location = 1) out vec3 seed;
-layout (location = 2) out vec3 vertexToEye;
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -30,6 +29,8 @@ vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2, vec3 v3)
     return mix(p0, p1, gl_TessCoord.y);
 }
 
+const float thickness = 0.03f;
+
 // The PG subdivided an equilateral triangle into
 // smaller triangles and executes the TES for every generated vertex.
 void main(void)
@@ -37,8 +38,6 @@ void main(void)
     outPos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
     seed = outPos * 4 + vec3(10.0f);
 
-    const float thickness = 0.03f;
     const vec3 worldPos = (ubo.model * vec4(outPos * (1.0f + thickness), 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
-    vertexToEye = normalize(ubo.eyePos - worldPos);
 }
