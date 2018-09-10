@@ -21,7 +21,9 @@ struct SwapchainObject {
     vk::UniqueRenderPass renderPass;
 
     vk::UniquePipelineLayout pipelineLayout;
-    vk::UniquePipeline graphicsPipeline;
+    vk::UniquePipeline terrainPipeline;
+    vk::UniquePipeline oceanPipeline;
+    vk::UniquePipeline atmospherePipeline;
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
     std::vector<vk::UniqueFramebuffer> framebuffers{};

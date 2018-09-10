@@ -93,12 +93,12 @@ public:
     ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
 
     vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount, vk::Format imageFormat,
-        vk::Format depthFormat) const;
+        vk::Format depthFormat, std::size_t numSubpass) const;
 
     vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
 
     vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
-        vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
+        vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
         const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
         vk::PrimitiveTopology primitiveType,
         vk::VertexInputBindingDescription bindingDescription,

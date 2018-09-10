@@ -506,7 +506,8 @@ vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout() con
     layoutBindings[0].descriptorCount = 1;
     layoutBindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex
         | vk::ShaderStageFlagBits::eTessellationControl
-        | vk::ShaderStageFlagBits::eTessellationEvaluation;
+        | vk::ShaderStageFlagBits::eTessellationEvaluation
+        | vk::ShaderStageFlagBits::eFragment;
     layoutBindings[0].pImmutableSamplers = nullptr;
 
     layoutBindings[1].binding = 1;
@@ -806,7 +807,8 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
     return image;
 }
 
-vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits sampleCount, vk::Format imageFormat, vk::Format depthFormat) const
+vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits sampleCount,
+    vk::Format imageFormat, vk::Format depthFormat, std::size_t numSubpass) const
 {
     std::array<vk::AttachmentDescription, 3> attachments;
 
@@ -854,12 +856,26 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     multiSampleResolveRef.attachment = 2;
     multiSampleResolveRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
-    vk::SubpassDescription subpass{};
-    subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-    subpass.colorAttachmentCount = colorAttachmentRefs.size();
-    subpass.pColorAttachments = colorAttachmentRefs.data();
-    subpass.pDepthStencilAttachment = &depthAttachmentRef;
-    subpass.pResolveAttachments = &multiSampleResolveRef;
+    std::vector<vk::SubpassDependency> dependencies;
+    std::vector<vk::SubpassDescription> subpasses(numSubpass);
+    for (std::uint32_t i = 0; i < numSubpass; ++i) {
+        subpasses[i].pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        subpasses[i].colorAttachmentCount = colorAttachmentRefs.size();
+        subpasses[i].pColorAttachments = colorAttachmentRefs.data();
+        subpasses[i].pDepthStencilAttachment = &depthAttachmentRef;
+        subpasses[i].pResolveAttachments = &multiSampleResolveRef;
+
+        if (i > 0) {
+            vk::SubpassDependency dependency{};
+            dependency.srcSubpass = i - 1;
+            dependency.dstSubpass = i;
+            dependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+            dependency.srcAccessMask = {};
+            dependency.dstStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+            dependency.dstAccessMask = {};
+            dependencies.push_back(dependency);
+        }
+    }
 
     // wait until the image is loaded
     vk::SubpassDependency dependency{};
@@ -869,14 +885,15 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     dependency.srcAccessMask = {};
     dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
     dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
+    dependencies.push_back(dependency);
 
     vk::RenderPassCreateInfo renderPassInfo{};
     renderPassInfo.attachmentCount = attachments.size();
     renderPassInfo.pAttachments = attachments.data();
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
+    renderPassInfo.subpassCount = static_cast<std::uint32_t>(subpasses.size());
+    renderPassInfo.pSubpasses = subpasses.data();
+    renderPassInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
+    renderPassInfo.pDependencies = dependencies.data();
 
     return m_device->createRenderPassUnique(renderPassInfo);
 }
@@ -919,7 +936,7 @@ static vk::UniqueShaderModule createShaderModule(vk::Device device, std::vector<
 }
 
 vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
-    vk::RenderPass renderPass, vk::SampleCountFlagBits sampleCount,
+    vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
     vk::PrimitiveTopology primitiveType,
     vk::VertexInputBindingDescription bindingDescription,
@@ -1017,9 +1034,9 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR
         | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eOne; // Optional
-    colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eZero; // Optional
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha; // Optional
+    colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha; // Optional
     colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd; // Optional
     colorBlendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eOne; // Optional
     colorBlendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eZero; // Optional
@@ -1043,7 +1060,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     depthStencil.stencilTestEnable = VK_FALSE;
 
     vk::PipelineTessellationStateCreateInfo tessInfo{};
-    tessInfo.patchControlPoints = 3;
+    tessInfo.patchControlPoints = 4;
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.stageCount = static_cast<std::uint32_t>(shaderStages.size());
@@ -1062,7 +1079,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
 
     // use this pipeline in the render pass
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = subpassIndex;
 
     pipelineInfo.basePipelineHandle = nullptr;
     pipelineInfo.basePipelineIndex = -1;

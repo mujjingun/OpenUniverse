@@ -21,7 +21,5 @@ out gl_PerVertex
 };
 
 void main() {
-    //gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0f);
-    //outPos = gl_Position.xyz;
     outPos = inPosition;
 }

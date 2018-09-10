@@ -26,13 +26,13 @@ in gl_PerVertex
 float GetTessLevel(float dist)
 {
     if (dist < 0.3f) {
-        return 20.0f;
+        return 8.0f;
     }
     if (dist < 1.0f) {
-        return 10.0f;
+        return 5.0f;
     }
     else if (dist < 4.0f) {
-        return 5.0f;
+        return 3.0f;
     }
     return 1.0f;
 }
