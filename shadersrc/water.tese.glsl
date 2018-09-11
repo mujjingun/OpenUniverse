@@ -134,8 +134,6 @@ layout(set = 0, binding = 0) uniform UniformBufferObject {
 layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;
-layout (location = 1) out vec3 seed;
-layout (location = 2) out vec3 vertexToEye;
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -155,15 +153,7 @@ vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2, vec3 v3)
 void main(void)
 {
     const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
-    seed = pos * 4;
-    const float noise = cnoise(seed)
-            + cnoise(seed * 2) / 2
-            + cnoise(seed * 4) / 4
-            + cnoise(seed * 8) / 8
-            + cnoise(seed * 16) / 16;
-
     vec3 worldPos = (ubo.model * vec4(pos, 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;
-    vertexToEye = normalize(ubo.eyePos - worldPos);
 }

@@ -120,12 +120,12 @@ layout(binding = 1) uniform sampler2D texSampler;
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 seed;
-layout(location = 2) in vec3 vertexToEye;
 
 const vec3 lightDir = normalize(vec3(0, -0.5, 0));
 
 void main() {
+    vec3 modelPos = normalize(inPos);
+    const vec3 seed = modelPos * 4;
     const float noise = cnoise(seed)
             + cnoise(seed * 2) / 2
             + cnoise(seed * 4) / 4
@@ -133,7 +133,6 @@ void main() {
             + cnoise(seed * 16) / 16;
     vec4 color = vec4(vec3(0.2f, 0.2f, 0.85f) * (1.0f - pow(abs(noise), 0.5) * .3f), 0.9f - 0.2 * smoothstep(-0.2, 0, noise));
 
-    vec3 modelPos = normalize(inPos);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
 
     vec3 dX = dFdx(worldPos);
@@ -142,6 +141,7 @@ void main() {
     float light = max(0.0, dot(lightDir, normal));
 
     vec3 lightReflect = normalize(reflect(lightDir, normal));
+    vec3 vertexToEye = normalize(ubo.eyePos - worldPos);
     float specularFactor = dot(vertexToEye, lightReflect);
     if (specularFactor > 0) {
         specularFactor = pow(specularFactor, 16);

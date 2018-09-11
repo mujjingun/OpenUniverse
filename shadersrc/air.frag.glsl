@@ -126,6 +126,8 @@ const vec3 lightDir = normalize(vec3(0, -0.5, 0));
 const float thickness = 0.03f;
 
 void main() {
+    vec3 modelPos = normalize(inPos);
+    const vec3 seed = modelPos * 4 + vec3(10.0f);
     const float cloudNoise = cnoise(seed)
             + cnoise(seed * 2) / 2
             + cnoise(seed * 4) / 4
@@ -133,7 +135,6 @@ void main() {
             + cnoise(seed * 16) / 8;
     const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
 
-    vec3 modelPos = normalize(inPos);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     vec3 dX = dFdx(worldPos);
     vec3 dY = dFdy(worldPos);
