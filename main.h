@@ -17,16 +17,22 @@ struct SwapchainObject {
 
     ImageObject multiSampleImage;
     ImageObject depthImage;
+    ImageObject noiseImage;
+    ImageObject noiseMultiSampleImage;
 
     vk::UniqueRenderPass renderPass;
+    vk::UniqueRenderPass noiseRenderPass;
 
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline terrainPipeline;
-    vk::UniquePipeline oceanPipeline;
     vk::UniquePipeline atmospherePipeline;
+    vk::UniquePipeline noisePipeline;
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
+    vk::UniqueCommandBuffer noiseCommandBuffer;
+
     std::vector<vk::UniqueFramebuffer> framebuffers{};
+    vk::UniqueFramebuffer noiseFramebuffer;
 
     SwapchainObject() = default;
     SwapchainObject(GraphicsContext const& context, vk::DescriptorSetLayout descriptorSetLayout,
@@ -69,10 +75,11 @@ private:
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
+    vk::UniqueSemaphore m_offscreenPassSemaphore;
     std::vector<vk::UniqueFence> m_inFlightFences;
 
     ImageObject m_textureImage;
-    vk::UniqueSampler m_sampler;
+    vk::UniqueSampler m_unnormalizedSampler;
 
     ModelObject m_model;
 

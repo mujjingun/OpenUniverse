@@ -514,7 +514,8 @@ vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout() con
     layoutBindings[1].descriptorCount = 1;
     layoutBindings[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
     layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    layoutBindings[1].stageFlags = vk::ShaderStageFlagBits::eTessellationEvaluation
+        | vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.bindingCount = layoutBindings.size();
@@ -706,10 +707,10 @@ static void submitSingleTimeCommands(vk::CommandBuffer commandBuffer, vk::Queue 
     queue.waitIdle();
 }
 
-static void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Queue queue, vk::Image image,
-    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, std::uint32_t mipLevels)
+void ou::GraphicsContext::transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
+    uint32_t mipLevels) const
 {
-    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(device, pool);
+    vk::UniqueCommandBuffer commandBuf = beginSingleTimeCommands(*m_device, *m_commandPool);
 
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = oldLayout;
@@ -762,9 +763,9 @@ static void transitionImageLayout(vk::Device device, vk::CommandPool pool, vk::Q
         throw std::invalid_argument("unsupported layout transition");
     }
 
-    commandBuffer->pipelineBarrier(sourceStage, destinationStage, {}, { nullptr }, { nullptr }, { barrier });
+    commandBuf->pipelineBarrier(sourceStage, destinationStage, {}, { nullptr }, { nullptr }, { barrier });
 
-    submitSingleTimeCommands(commandBuffer.get(), queue);
+    submitSingleTimeCommands(*commandBuf, m_graphicsQueue);
 }
 
 ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const
@@ -789,7 +790,7 @@ ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::Sam
         vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
 
     // make it a depth buffer
-    transitionImageLayout(*m_device, *m_commandPool, m_graphicsQueue, depth.image.get(),
+    transitionImageLayout(depth.image.get(),
         vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
 
     return depth;
@@ -801,7 +802,7 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
         vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
         vk::ImageAspectFlagBits::eColor);
 
-    transitionImageLayout(*m_device, *m_commandPool, m_graphicsQueue, image.image.get(),
+    transitionImageLayout(image.image.get(),
         vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
 
     return image;
@@ -1097,28 +1098,22 @@ std::vector<vk::UniqueCommandBuffer> ou::GraphicsContext::allocateCommandBuffers
     return m_device->allocateCommandBuffersUnique(allocInfo);
 }
 
-std::vector<vk::UniqueFramebuffer> ou::GraphicsContext::makeFramebuffers(const std::vector<vk::UniqueImageView>& imageViews, vk::ImageView depthImageView, vk::ImageView multiSampleImageView, vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const
+vk::UniqueFramebuffer ou::GraphicsContext::makeFramebuffer(vk::ImageView imageView, vk::ImageView depthImageView, vk::ImageView multiSampleImageView, vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const
 {
-    std::vector<vk::UniqueFramebuffer> framebuffers;
+    vk::FramebufferCreateInfo framebufferInfo = {};
+    framebufferInfo.renderPass = renderPass;
 
-    for (auto const& uniqueImageView : imageViews) {
-        vk::FramebufferCreateInfo framebufferInfo = {};
-        framebufferInfo.renderPass = renderPass;
+    std::array<vk::ImageView, 3> attachments = {
+        { multiSampleImageView, depthImageView, imageView }
+    };
+    framebufferInfo.attachmentCount = attachments.size();
+    framebufferInfo.pAttachments = attachments.data();
 
-        std::array<vk::ImageView, 3> attachments = {
-            { multiSampleImageView, depthImageView, uniqueImageView.get() }
-        };
-        framebufferInfo.attachmentCount = attachments.size();
-        framebufferInfo.pAttachments = attachments.data();
+    framebufferInfo.width = swapChainExtent.width;
+    framebufferInfo.height = swapChainExtent.height;
+    framebufferInfo.layers = 1;
 
-        framebufferInfo.width = swapChainExtent.width;
-        framebufferInfo.height = swapChainExtent.height;
-        framebufferInfo.layers = 1;
-
-        framebuffers.push_back(m_device->createFramebufferUnique(framebufferInfo));
-    }
-
-    return framebuffers;
+    return m_device->createFramebufferUnique(framebufferInfo);
 }
 
 std::vector<vk::UniqueSemaphore> ou::GraphicsContext::makeSemaphores(uint32_t count) const
@@ -1346,7 +1341,7 @@ ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) cons
         vk::ImageAspectFlagBits::eColor);
 
     // image layout is not gpu accessible by now
-    transitionImageLayout(*m_device, *m_commandPool, m_graphicsQueue, *texture.image,
+    transitionImageLayout(*texture.image,
         vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
 
     // copy buffer to image
@@ -1359,28 +1354,46 @@ ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) cons
     return texture;
 }
 
-vk::UniqueSampler ou::GraphicsContext::makeTextureSampler() const
+vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoordinates) const
 {
     vk::SamplerCreateInfo samplerInfo;
     samplerInfo.magFilter = vk::Filter::eLinear;
     samplerInfo.minFilter = vk::Filter::eLinear;
 
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
-
-    samplerInfo.anisotropyEnable = VK_TRUE;
-    samplerInfo.maxAnisotropy = 16;
-
-    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
     samplerInfo.compareEnable = VK_FALSE;
     samplerInfo.compareOp = vk::CompareOp::eAlways;
 
-    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 12.0f;
+    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+
+    if (unnormalizedCoordinates) {
+        samplerInfo.unnormalizedCoordinates = true;
+
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+
+        samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.maxAnisotropy = 16;
+    }
+    else {
+        samplerInfo.unnormalizedCoordinates = false;
+
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 12.0f;
+
+        samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+        samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+        samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+
+        samplerInfo.anisotropyEnable = VK_TRUE;
+        samplerInfo.maxAnisotropy = 16;
+    }
 
     return m_device->createSamplerUnique(samplerInfo);
 }

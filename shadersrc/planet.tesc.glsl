@@ -25,6 +25,9 @@ in gl_PerVertex
 
 float GetTessLevel(float dist)
 {
+    if (dist < 0.1f) {
+        return 10.0f;
+    }
     if (dist < 0.3f) {
         return 8.0f;
     }

@@ -88,6 +88,8 @@ public:
     ImageObject makeImage(vk::SampleCountFlagBits numSamples, std::uint32_t mipLevels, vk::Extent2D extent,
         vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlagBits aspect) const;
 
+    void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, std::uint32_t mipLevels) const;
+
     ImageObject makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
 
     ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
@@ -106,7 +108,7 @@ public:
 
     std::vector<vk::UniqueCommandBuffer> allocateCommandBuffers(std::uint32_t count) const;
 
-    std::vector<vk::UniqueFramebuffer> makeFramebuffers(std::vector<vk::UniqueImageView> const& imageViews,
+    vk::UniqueFramebuffer makeFramebuffer(vk::ImageView imageViews,
         vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
         vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const;
 
@@ -122,7 +124,7 @@ public:
 
     ImageObject makeTextureImage(const char* filename) const;
 
-    vk::UniqueSampler makeTextureSampler() const;
+    vk::UniqueSampler makeTextureSampler(bool unnormalizedCoordinates) const;
 
     vk::SampleCountFlagBits getMaxUsableSampleCount(uint32_t preferredSampleCount) const;
 

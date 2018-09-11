@@ -114,38 +114,25 @@ layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 proj;
     vec3 eyePos;
 } ubo;
-layout(binding = 1) uniform sampler2D texSampler;
 
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 seed;
-layout(location = 2) in vec3 vertexToEye;
-
-const vec3 lightDir = normalize(vec3(0, -0.5, 0));
 
 void main() {
-    const float noise = cnoise(seed)
-            + cnoise(seed * 2) / 2
-            + cnoise(seed * 4) / 4
-            + cnoise(seed * 8) / 8
-            + cnoise(seed * 16) / 16;
-    vec3 color = mix(vec3(236, 221, 166) / 256.0f, vec3(61, 82, 48) / 256.0f, smoothstep(0.0f, 0.05f, noise));
+    const vec3 seed_1 = normalize(inPos) * 2;
+    const float noise_1 = cnoise(seed_1)
+            + cnoise(seed_1 * 2) / 2
+            + cnoise(seed_1 * 8) / 4
+            + cnoise(seed_1 * 16) / 6
+            + cnoise(seed_1 * 64) / 8;
 
-    vec3 modelPos = normalize(inPos) * (1.0f + vec3(noise * 0.015f));
-    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-
-    vec3 dX = dFdx(worldPos);
-    vec3 dY = dFdy(worldPos);
-    vec3 normal = normalize(cross(dX,dY));
-    float light = max(0.0, dot(lightDir, normal));
-
-    vec3 lightReflect = normalize(reflect(lightDir, normal));
-    float specularFactor = dot(vertexToEye, lightReflect);
-    if (specularFactor > 0) {
-        specularFactor = pow(specularFactor, 16);
-        light += specularFactor * 0.05f;
-    }
-    outColor = vec4(light * color, 1.0f);
+    const vec3 seed_2 = seed_1 * 4 + vec3(10.0f);
+    const float noise_2 = cnoise(seed_2)
+            + cnoise(seed_2 * 2) / 2
+            + cnoise(seed_2 * 4) / 4
+            + cnoise(seed_2 * 8) / 8
+            + cnoise(seed_2 * 32) / 16;
+    outColor = vec4(vec3(noise_1, noise_2, 0.0f), 1.0f);
 }
 

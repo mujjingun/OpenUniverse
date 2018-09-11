@@ -114,7 +114,6 @@ layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 proj;
     vec3 eyePos;
 } ubo;
-
 layout(binding = 1) uniform sampler2D texSampler;
 
 layout(location = 0) out vec4 outColor;
@@ -126,27 +125,26 @@ layout(location = 2) in vec3 vertexToEye;
 const vec3 lightDir = normalize(vec3(0, -0.5, 0));
 
 void main() {
-    const float noise = cnoise(seed)
-            + cnoise(seed * 2) / 2
-            + cnoise(seed * 4) / 4
-            + cnoise(seed * 8) / 8
-            + cnoise(seed * 16) / 16;
-    vec4 color = vec4(vec3(0.2f, 0.2f, 0.85f) * (1.0f - pow(abs(noise), 0.5) * .3f), 0.9f - 0.2 * smoothstep(-0.2, 0, noise));
+    float noise = texelFetch(texSampler, ivec2(gl_FragCoord.xy), 0).x;
+    vec4 terrainColor = vec4(mix(vec3(236, 221, 166) / 256.0f, vec3(61, 82, 48) / 256.0f, smoothstep(0.0f, 0.07f, noise)), 1.0);
+    vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.85f) * (1.0f - pow(abs(noise), 0.5) * .3f), 0.9f - 0.2 * smoothstep(-0.2, 0, noise));
+    float oceanOrTerrain = smoothstep(-0.01f, 0.01f, noise);
+    vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
 
-    vec3 modelPos = normalize(inPos);
+    vec3 modelPos = normalize(inPos) * mix(1.0f, 1.0f + noise * 0.015f, oceanOrTerrain);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
 
     vec3 dX = dFdx(worldPos);
     vec3 dY = dFdy(worldPos);
     vec3 normal = normalize(cross(dX,dY));
-    float light = max(0.0, dot(lightDir, normal));
+    float light = max(0.0f, dot(lightDir, normal)) + 0.1f;
 
     vec3 lightReflect = normalize(reflect(lightDir, normal));
     float specularFactor = dot(vertexToEye, lightReflect);
     if (specularFactor > 0) {
         specularFactor = pow(specularFactor, 16);
-        light += specularFactor * 0.5f;
+        light += specularFactor * mix(0.5f, 0.05f, oceanOrTerrain);
     }
-    outColor = vec4(light * color.rgb, color.a);
+    outColor = vec4(light * color.xyz, color.a);
 }
 

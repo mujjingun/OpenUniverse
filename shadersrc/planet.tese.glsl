@@ -2,6 +2,20 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
+//
+// GLSL textureless classic 3D noise "cnoise",
+// with an RSL-style periodic variant "pnoise".
+// Author:  Stefan Gustavson (stefan.gustavson@liu.se)
+// Version: 2011-10-11
+//
+// Many thanks to Ian McEwan of Ashima Arts for the
+// ideas for permutation and gradient selection.
+//
+// Copyright (c) 2011 Stefan Gustavson. All rights reserved.
+// Distributed under the MIT license. See LICENSE file.
+// https://github.com/stegu/webgl-noise
+//
+
 vec3 mod289(vec3 x)
 {
   return x - floor(x * (1.0 / 289.0)) * 289.0;
@@ -108,49 +122,50 @@ float pnoise(vec3 P, vec3 rep)
   return noise_impl(P, Pi0, Pi1);
 }
 
+
+layout (quads, fractional_even_spacing, ccw) in;
+
 layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
     vec3 eyePos;
 } ubo;
-layout(binding = 1) uniform sampler2D texSampler;
 
-layout(location = 0) out vec4 outColor;
+layout (location = 0) in vec3 inPos[];
 
-layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 seed;
+layout (location = 0) out vec3 outPos;
+layout (location = 1) out vec3 seed;
+layout (location = 2) out vec3 vertexToEye;
 
-const vec3 lightDir = normalize(vec3(0, -0.5, 0));
+out gl_PerVertex {
+  vec4 gl_Position;
+  float gl_PointSize;
+  float gl_ClipDistance[];
+};
 
-const float thickness = 0.03f;
-
-void main() {
-    const float cloudNoise = cnoise(seed)
-            + cnoise(seed * 2) / 2
-            + cnoise(seed * 4) / 4
-            + cnoise(seed * 8) / 6
-            + cnoise(seed * 16) / 8;
-    const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
-
-    vec3 modelPos = normalize(inPos);
-    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-    vec3 dX = dFdx(worldPos);
-    vec3 dY = dFdy(worldPos);
-    vec3 normal = normalize(cross(dX,dY));
-    float light = max(0.0, dot(lightDir, normal));
-
-    vec3 vertexToEye = normalize(ubo.eyePos - worldPos);
-    float cosine = dot(-vertexToEye, normal);
-    float b = (1.0f + thickness) * cosine;
-    float D = b * b - thickness * (2.0f + thickness);
-    float scatterLength = mix(b - sqrt(max(0, D)), 2.0f * cosine * (1.0f + thickness), smoothstep(0.03, 0.01, D));
-    const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
-    scatterLength /= maxScatterLength;
-    vec4 scatterColor = vec4(0.5f, 0.5f, 1.0f, pow(scatterLength * 0.5, 3));
-    vec4 cloudColor = vec4(vec3(1.0f), cloud);
-    outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
-    outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
-    outColor = vec4(outColor.rgb * light, outColor.a);
+vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2, vec3 v3)
+{
+    const vec3 p0 = mix(v0, v3, gl_TessCoord.x);
+    const vec3 p1 = mix(v1, v2, gl_TessCoord.x);
+    return mix(p0, p1, gl_TessCoord.y);
 }
 
+// The PG subdivided an equilateral triangle into
+// smaller triangles and executes the TES for every generated vertex.
+void main(void)
+{
+    const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
+    seed = pos;
+    const float noise = 0;// cnoise(seed)
+           // + cnoise(seed * 2) / 2
+           // + cnoise(seed * 4) / 4
+           // + cnoise(seed * 8) / 8
+           // + cnoise(seed * 16) / 16;
+
+    vec3 modelPos = pos * (1.0f + vec3(noise * 0.015f));
+    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+    gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
+    outPos = pos;
+    vertexToEye = normalize(ubo.eyePos - worldPos);
+}
