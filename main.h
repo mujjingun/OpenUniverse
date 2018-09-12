@@ -61,6 +61,8 @@ private:
     void refreshSwapchain();
     void recordDrawCommands();
     void drawFrame();
+    void step(std::chrono::duration<double> delta);
+    void keyEvent(int key, int scancode, int action, int mods);
 
 private:
     // graphics stuff
@@ -79,23 +81,34 @@ private:
     std::vector<vk::UniqueFence> m_inFlightFences;
 
     ImageObject m_textureImage;
-    vk::UniqueSampler m_unnormalizedSampler;
+    vk::UniqueSampler m_sampler;
 
-    ModelObject m_model;
-
-    std::vector<vk::UniqueBuffer> m_uniformBuffers{};
-    std::vector<vk::UniqueDeviceMemory> m_uniformBuffersMemory{};
+    std::vector<BufferObject> m_uniformBuffers{};
+    BufferObject m_noiseUniformBuffer;
 
     std::size_t m_currentFrame = 0;
-
-    // logic stuff
-    std::chrono::system_clock::time_point m_startTime;
-    std::chrono::system_clock::time_point m_lastFrameTime;
 
     // fps calculation
     double m_averageFps;
     std::size_t m_fpsFrameCounter, m_fpsMeasurementsCount;
     std::chrono::system_clock::time_point m_lastFpsTime;
+
+    // logic stuff
+    std::chrono::system_clock::time_point m_lastFrameTime;
+
+    // planet related stuff
+    int m_parallelCount, m_meridianCount;
+    bool m_renderHeightmap;
+    float m_planetRotateAngle;
+
+    // player camera
+    glm::vec3 m_eyePosition;
+    glm::vec3 m_lookDirection;
+    glm::vec3 m_upDirection;
+    bool m_movingForward, m_movingBackward, m_rotatingLeft, m_rotatingRight;
+
+    glm::vec2 m_lastCursorPos;
+    glm::vec2 m_deltaCursorPos;
 };
 
 } // namespace ou

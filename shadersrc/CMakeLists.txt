@@ -24,6 +24,4 @@ compile_shader(air.tese.glsl ../shaders/air.tese.spv)
 compile_shader(air.frag.glsl ../shaders/air.frag.spv)
 
 compile_shader(noise.vert.glsl ../shaders/noise.vert.spv)
-compile_shader(noise.tesc.glsl ../shaders/noise.tesc.spv)
-compile_shader(noise.tese.glsl ../shaders/noise.tese.spv)
 compile_shader(noise.frag.glsl ../shaders/noise.frag.spv)

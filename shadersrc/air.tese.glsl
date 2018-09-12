@@ -4,11 +4,15 @@
 
 layout (quads, fractional_even_spacing, ccw) in;
 
-layout(set = 0, binding = 0) uniform UniformBufferObject {
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
-    vec3 eyePos;
+    vec4 eyePos;
+    vec4 modelEyePos;
+    vec4 lightDir;
+    int parallelCount;
+    int meridianCount;
 } ubo;
 
 layout (location = 0) in vec3 inPos[];

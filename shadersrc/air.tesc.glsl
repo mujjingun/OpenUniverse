@@ -2,11 +2,15 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
-layout(set = 0, binding = 0) uniform UniformBufferObject {
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
-    vec3 eyePos;
+    vec4 eyePos;
+    vec4 modelEyePos;
+    vec4 lightDir;
+    int parallelCount;
+    int meridianCount;
 } ubo;
 
 // number of control points in the output patch
@@ -44,7 +48,7 @@ void main(void)
 
     const vec3 centerPos = (inPos[0] + inPos[1] + inPos[2] + inPos[3]) / 4.0f;
     const vec3 worldPos = (ubo.model * vec4(centerPos, 1.0f)).xyz;
-    const float avgDist = distance(worldPos, ubo.eyePos);
+    const float avgDist = distance(worldPos, ubo.eyePos.xyz);
     const float tessLevel = GetTessLevel(avgDist);
 
     gl_TessLevelOuter[0] = tessLevel;

@@ -360,6 +360,7 @@ ou::GraphicsContext::GraphicsContext()
 ou::GraphicsContext::GraphicsContext(int width, int height, bool fullscreen)
     : m_window(makeWindow(width, height, fullscreen))
     , m_videoMode(glfwGetVideoMode(glfwGetPrimaryMonitor()))
+    , m_windowedModeSize{ static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) }
     , m_instance(makeInstance())
     , m_dispatchLoader(*m_instance)
     , m_messenger(makeDebugMessenger(*m_instance, m_dispatchLoader))
@@ -411,7 +412,23 @@ int ou::GraphicsContext::refreshRate() const
 vk::Extent2D ou::GraphicsContext::screenResolution() const
 {
     return { static_cast<std::uint32_t>(m_videoMode->width),
-        static_cast<std::uint32_t>(m_videoMode->height) };
+                static_cast<std::uint32_t>(m_videoMode->height) };
+}
+
+void ou::GraphicsContext::toggleFullscreenMode() const
+{
+    GLFWmonitor* monitor = glfwGetWindowMonitor(m_window.get());
+
+    if (!monitor) {
+        // enable fullscreen mode
+        glfwSetWindowMonitor(m_window.get(), glfwGetPrimaryMonitor(), 0, 0,
+            static_cast<int>(screenResolution().width), static_cast<int>(screenResolution().height), refreshRate());
+    }
+    else {
+        // disable fullscreen mode
+        glfwSetWindowMonitor(m_window.get(), nullptr, 0, 0,
+            static_cast<int>(m_windowedModeSize.width), static_cast<int>(m_windowedModeSize.height), refreshRate());
+    }
 }
 
 ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
@@ -940,6 +957,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
     vk::PrimitiveTopology primitiveType,
+    bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const
 {
@@ -983,10 +1001,12 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
 
     // build the pipeline
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    if (attachVertexData) {
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    }
 
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.topology = primitiveType;
@@ -1221,12 +1241,22 @@ ou::BufferObject ou::GraphicsContext::constructDeviceLocalBuffer(vk::BufferUsage
     // make vertex buffer
     BufferObject result;
     result.buffer = makeBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | usageFlags);
-    result.bufferMemory = allocateBufferMemory(*result.buffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    result.memory = allocateBufferMemory(*result.buffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     // copy staging -> vertex buffer
     copyBuffer(*stagingBuffer, *result.buffer, bufferSize, *m_device, *m_commandPool, m_graphicsQueue);
 
     return result;
+}
+
+ou::BufferObject ou::GraphicsContext::makeHostVisibleBuffer(vk::BufferUsageFlags usageFlags, std::size_t bufferSize) const
+{
+    BufferObject buf;
+    buf.buffer = makeBuffer(bufferSize, usageFlags);
+    buf.memory = allocateBufferMemory(*buf.buffer,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    return buf;
 }
 
 static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool, vk::Queue queue,
@@ -1360,7 +1390,6 @@ vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoord
     samplerInfo.magFilter = vk::Filter::eLinear;
     samplerInfo.minFilter = vk::Filter::eLinear;
 
-
     samplerInfo.compareEnable = VK_FALSE;
     samplerInfo.compareOp = vk::CompareOp::eAlways;
 
@@ -1379,8 +1408,7 @@ vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoord
 
         samplerInfo.anisotropyEnable = VK_FALSE;
         samplerInfo.maxAnisotropy = 16;
-    }
-    else {
+    } else {
         samplerInfo.unnormalizedCoordinates = false;
 
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;

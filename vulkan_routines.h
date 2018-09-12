@@ -54,7 +54,7 @@ struct ImageObject {
 
 struct BufferObject {
     vk::UniqueBuffer buffer;
-    vk::UniqueDeviceMemory bufferMemory;
+    vk::UniqueDeviceMemory memory;
 };
 
 class GraphicsContext {
@@ -72,6 +72,8 @@ public:
     vk::Extent2D screenResolution() const;
 
     // member functions
+    void toggleFullscreenMode() const;
+
     SwapchainProperties selectSwapchainProperties() const;
 
     vk::UniqueDescriptorSetLayout makeDescriptorSetLayout() const;
@@ -103,6 +105,7 @@ public:
         vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
         const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
         vk::PrimitiveTopology primitiveType,
+        bool attachVertexData,
         vk::VertexInputBindingDescription bindingDescription,
         const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const;
 
@@ -122,6 +125,8 @@ public:
 
     BufferObject constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData, std::size_t bufferSize) const;
 
+    BufferObject makeHostVisibleBuffer(vk::BufferUsageFlags usageFlags, std::size_t bufferSize) const;
+
     ImageObject makeTextureImage(const char* filename) const;
 
     vk::UniqueSampler makeTextureSampler(bool unnormalizedCoordinates) const;
@@ -131,6 +136,7 @@ public:
 private:
     UniqueWindow m_window;
     const GLFWvidmode* m_videoMode;
+    vk::Extent2D m_windowedModeSize;
 
     vk::UniqueInstance m_instance;
 

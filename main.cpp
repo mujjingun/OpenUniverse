@@ -6,9 +6,13 @@
 #include <thread>
 #include <unordered_map>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/intersect.hpp"
+#include "glm/gtx/string_cast.hpp"
+
 namespace ou {
 
-static const std::size_t maxFramesInFlight = 1;
+static const std::size_t maxFramesInFlight = 2;
 
 struct Vertex {
     glm::vec3 pos;
@@ -45,11 +49,18 @@ ModelObject::ModelObject(GraphicsContext const& context,
 {
 }
 
+struct MapBoundsObject {
+};
+
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
-    glm::vec3 eyePos;
+    glm::vec4 eyePos;
+    glm::vec4 modelEyePos;
+    glm::vec4 lightDir;
+    std::int32_t parallelCount;
+    std::int32_t meridianCount;
 };
 
 SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorSetLayout descriptorSetLayout,
@@ -85,18 +96,15 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
     pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
     terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
         "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv",
-        vk::PrimitiveTopology::ePatchList,
-        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+        vk::PrimitiveTopology::ePatchList, false, {}, {});
 
     atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
         "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv",
-        vk::PrimitiveTopology::ePatchList,
-        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+        vk::PrimitiveTopology::ePatchList, false, {}, {});
 
     noisePipeline = context.makePipeline(*pipelineLayout, properties.extent, *noiseRenderPass, 0, sampleCount,
-        "shaders/noise.vert.spv", "shaders/noise.frag.spv", "shaders/noise.tesc.spv", "shaders/noise.tese.spv",
-        vk::PrimitiveTopology::ePatchList,
-        Vertex::getBindingDescription(), Vertex::getAttributeDescriptions());
+        "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
+        vk::PrimitiveTopology::eTriangleFan, false, {}, {});
 
     // make command buffers
     commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
@@ -118,6 +126,7 @@ VulkanApplication::VulkanApplication()
     , m_swapchainProps(m_context.selectSwapchainProperties())
 
     // make description set layout, pool, and sets
+    // TODO: make separate descriptionsetlayout for noise rendering
     , m_descriptorSetLayout(m_context.makeDescriptorSetLayout())
     , m_descriptorPool(m_context.makeDescriptorPool(m_swapchainProps.imageCount + 1))
     , m_descriptorSets(m_context.makeDescriptorSets(*m_descriptorPool, *m_descriptorSetLayout, m_swapchainProps.imageCount + 1))
@@ -135,51 +144,17 @@ VulkanApplication::VulkanApplication()
     , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
 
     // make sampler
-    , m_unnormalizedSampler(m_context.makeTextureSampler(true))
+    , m_sampler(m_context.makeTextureSampler(false))
+
+    , m_parallelCount(45)
+    , m_meridianCount(90)
+    , m_renderHeightmap(true)
 {
-    std::vector<glm::vec3> vertices;
-    std::vector<std::uint16_t> indices;
-
-    // convert spherical coords to cartesian
-    auto spherical = [](float theta, float phi) {
-        return glm::vec3({ std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta) });
-    };
-
-    const int meridians = 90;
-    const int parallels = 45;
-    const float theta = glm::pi<float>() / parallels;
-    const float phi = 2 * glm::pi<float>() / meridians;
-
-    for (int p = 0; p <= parallels; ++p) {
-        for (int m = 0; m < meridians; ++m) {
-            vertices.push_back(spherical(theta * p, phi * m));
-            if (m > 0) {
-                indices.push_back(std::uint16_t(std::max(0, int(vertices.size()) - meridians - 1)));
-                indices.push_back(std::uint16_t(std::max(0, int(vertices.size()) - meridians - 2)));
-                indices.push_back(std::uint16_t(int(vertices.size()) - 2));
-                indices.push_back(std::uint16_t(int(vertices.size()) - 1));
-            }
-        }
-        indices.push_back(std::uint16_t(std::max(0, int(vertices.size()) - meridians - meridians)));
-        indices.push_back(std::uint16_t(std::max(0, int(vertices.size()) - meridians - 1)));
-        indices.push_back(std::uint16_t(int(vertices.size() - 1)));
-        indices.push_back(std::uint16_t(int(vertices.size() - meridians)));
-    }
-
-    std::vector<Vertex> attributes;
-    for (auto const& vertex : vertices) {
-        attributes.push_back({ vertex });
-    }
-    std::cout << "vertex count: " << indices.size() << std::endl;
-
-    m_model = ModelObject(m_context, attributes, indices);
-
     // make uniform buffers
-    for (std::uint32_t i = 0; i < m_swapchainProps.imageCount + 1; ++i) {
-        m_uniformBuffers.push_back(m_context.makeBuffer(sizeof(UniformBufferObject), vk::BufferUsageFlagBits::eUniformBuffer));
-        m_uniformBuffersMemory.push_back(m_context.allocateBufferMemory(*m_uniformBuffers.back(),
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
+        m_uniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
     }
+    m_noiseUniformBuffer = m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject));
 
     // record draw commands
     recordDrawCommands();
@@ -188,6 +163,7 @@ VulkanApplication::VulkanApplication()
 void VulkanApplication::refreshSwapchain()
 {
     m_context.device().waitIdle();
+    m_renderHeightmap = true;
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
@@ -210,6 +186,8 @@ void VulkanApplication::recordDrawCommands()
     // depth buffer clear value
     clearValues[1].depthStencil.depth = 1.0f;
     clearValues[1].depthStencil.stencil = 0;
+
+    // record offscreen rendering
     {
         vk::CommandBufferBeginInfo beginInfo{};
         beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
@@ -219,9 +197,9 @@ void VulkanApplication::recordDrawCommands()
 
         // bind uniform descriptor sets
         vk::DescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = *m_uniformBuffers.back();
+        bufferInfo.buffer = *m_noiseUniformBuffer.buffer;
         bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(UniformBufferObject);
+        bufferInfo.range = VK_WHOLE_SIZE;
 
         std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
         descriptorWrites[0].dstSet = m_descriptorSets.back();
@@ -244,29 +222,26 @@ void VulkanApplication::recordDrawCommands()
 
         m_swapchain.noiseCommandBuffer->beginRenderPass(noiseRenderPassInfo, vk::SubpassContents::eInline);
         {
-            m_swapchain.noiseCommandBuffer->bindVertexBuffers(0, { *m_model.vertexBuffer.buffer }, { 0 });
-
-            m_swapchain.noiseCommandBuffer->bindIndexBuffer(*m_model.indexBuffer.buffer, 0, vk::IndexType::eUint16);
-
             m_swapchain.noiseCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
                 { m_descriptorSets.back() }, {});
 
             m_swapchain.noiseCommandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipeline);
-            m_swapchain.noiseCommandBuffer->drawIndexed(static_cast<std::uint32_t>(m_model.indexCount), 1, 0, 0, 0);
+            m_swapchain.noiseCommandBuffer->draw(4, 1, 0, 0);
         }
         m_swapchain.noiseCommandBuffer->endRenderPass();
 
         m_swapchain.noiseCommandBuffer->end();
     }
 
+    // record main rendering
     std::size_t index = 0;
     for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
 
         // bind uniform descriptor sets
         vk::DescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = *m_uniformBuffers[index];
+        bufferInfo.buffer = *m_uniformBuffers[index].buffer;
         bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(UniformBufferObject);
+        bufferInfo.range = VK_WHOLE_SIZE;
 
         std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
         descriptorWrites[0].dstSet = m_descriptorSets[index];
@@ -279,7 +254,7 @@ void VulkanApplication::recordDrawCommands()
         vk::DescriptorImageInfo imageInfo{};
         imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
         imageInfo.imageView = *m_swapchain.noiseImage.view;
-        imageInfo.sampler = *m_unnormalizedSampler;
+        imageInfo.sampler = *m_sampler;
 
         descriptorWrites[1].dstSet = m_descriptorSets[index];
         descriptorWrites[1].dstBinding = 1;
@@ -308,20 +283,17 @@ void VulkanApplication::recordDrawCommands()
 
         commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
         {
-            commandBuffer->bindVertexBuffers(0, { *m_model.vertexBuffer.buffer }, { 0 });
-
-            commandBuffer->bindIndexBuffer(*m_model.indexBuffer.buffer, 0, vk::IndexType::eUint16);
-
             commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
                 { m_descriptorSets[index] }, {});
 
             commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
-            commandBuffer->drawIndexed(static_cast<std::uint32_t>(m_model.indexCount), 1, 0, 0, 0);
+            auto vertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
+            commandBuffer->draw(vertexCount, 1, 0, 0);
 
             commandBuffer->nextSubpass(vk::SubpassContents::eInline);
 
             commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
-            commandBuffer->drawIndexed(static_cast<std::uint32_t>(m_model.indexCount), 1, 0, 0, 0);
+            commandBuffer->draw(vertexCount, 1, 0, 0);
         }
         commandBuffer->endRenderPass();
 
@@ -334,14 +306,37 @@ void VulkanApplication::recordDrawCommands()
 void VulkanApplication::run()
 {
     using namespace std::chrono;
-    m_startTime = m_lastFpsTime = m_lastFrameTime = system_clock::now();
+    m_lastFpsTime = m_lastFrameTime = system_clock::now();
     m_fpsFrameCounter = m_fpsMeasurementsCount = 0;
+    m_eyePosition = glm::vec3(0.0f, 3.0f, 0.0f);
+    m_lookDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+    m_upDirection = glm::vec3(0.0f, 0.0f, 1.0f);
+    m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
+
+    glfwSetWindowUserPointer(m_context.window(), this);
+    glfwSetKeyCallback(m_context.window(), [](GLFWwindow* window, int key, int scancode, int action, int mods) {
+        auto* app = static_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+        app->keyEvent(key, scancode, action, mods);
+    });
+
+    glfwSetInputMode(m_context.window(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetCursorPosCallback(m_context.window(), [](GLFWwindow* window, double xpos, double ypos) {
+        auto* app = static_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+        if (!std::isfinite(app->m_lastCursorPos.x)) {
+            app->m_lastCursorPos = glm::vec2{ xpos, ypos };
+        }
+        app->m_lastCursorPos += app->m_deltaCursorPos;
+        app->m_deltaCursorPos = glm::vec2{ xpos, ypos } - app->m_lastCursorPos;
+    });
 
     // main loop
     while (!glfwWindowShouldClose(m_context.window())) {
         drawFrame();
 
         glfwPollEvents();
+
+        // advance 1 game tick
+        step(system_clock::now() - m_lastFrameTime);
 
         // calculate FPS
         m_fpsFrameCounter++;
@@ -357,14 +352,50 @@ void VulkanApplication::run()
             m_fpsMeasurementsCount++;
         }
 
+        // cap framerate
         const double frameInterval = 1.0 / (m_context.refreshRate() + 1);
         while (system_clock::now() - m_lastFrameTime < duration<double>(frameInterval))
-            ;
+            std::this_thread::sleep_for(microseconds(1));
         m_lastFrameTime = currentTime;
     }
 
     std::cout << "Average fps: " << std::setprecision(0) << std::fixed << m_averageFps << std::endl;
     m_context.device().waitIdle();
+}
+
+void VulkanApplication::step(std::chrono::duration<double> delta)
+{
+    using namespace std::chrono;
+    const float dt = duration<float, seconds::period>(delta).count();
+
+    m_planetRotateAngle += dt / 32.0f * glm::radians(90.0f);
+
+    const float sensitivity = 0.005f;
+    glm::vec3 right = glm::cross(m_lookDirection, m_upDirection);
+    glm::mat4 rotate0 = glm::rotate(glm::mat4(1.0f), m_deltaCursorPos.x * sensitivity, m_upDirection);
+    glm::mat4 rotate1 = glm::rotate(glm::mat4(1.0f), m_deltaCursorPos.y * sensitivity, right);
+    m_lookDirection = rotate0 * rotate1 * glm::vec4(m_lookDirection, 1.0f);
+    m_upDirection = rotate1 * glm::vec4(m_upDirection, 1.0f);
+
+    float distance = glm::distance(m_eyePosition, glm::vec3(0));
+    float speed = (distance - 1.0f);
+    if (m_movingForward) {
+        m_eyePosition += m_lookDirection * speed * dt;
+    }
+    if (m_movingBackward) {
+        m_eyePosition -= m_lookDirection * speed * dt;
+    }
+    if (m_rotatingLeft) {
+        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), -dt, m_lookDirection);
+        m_upDirection = rotate * glm::vec4(m_upDirection, 0.0f);
+    }
+    if (m_rotatingRight) {
+        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), dt, m_lookDirection);
+        m_upDirection = rotate * glm::vec4(m_upDirection, 0.0f);
+    }
+
+    m_lastCursorPos += m_deltaCursorPos;
+    m_deltaCursorPos = glm::vec2(0);
 }
 
 void VulkanApplication::drawFrame()
@@ -379,70 +410,79 @@ void VulkanApplication::drawFrame()
     vk::Fence inFlightFence = *m_inFlightFences[m_currentFrame];
     m_context.device().waitForFences({ inFlightFence }, VK_TRUE, timeOut);
 
-    UniformBufferObject ubo{};
-    {
-        using namespace std::chrono;
-        float time = duration<float, seconds::period>(system_clock::now() - m_startTime).count();
-        ubo.model = glm::rotate(glm::mat4(1.0f), time / 4.0f * glm::radians(90.0f), glm::normalize(glm::vec3(0.0f, 0.3f, 0.8f)));
-        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
-
-        ubo.eyePos = glm::rotate(glm::mat4(1.0f), time / 8.0f * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f))
-            * glm::vec4(2.0f, 2.0f, 0.0f, 1.0f);
-
-        ubo.view = glm::lookAt(ubo.eyePos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-        ubo.proj = glm::perspective(glm::radians(45.0f),
-            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
-            0.1f, 10.0f);
-        ubo.proj[1][1] *= -1; // invert Y axis
-    }
-
     // acquire next image to write into from the swap chain
     // note: this function is asynchronous
-    std::uint32_t imageIndex;
-    m_context.device().acquireNextImageKHR(*m_swapchain.swapchain, timeOut,
-        *m_imageAvailableSemaphores[m_currentFrame], nullptr, &imageIndex);
+    std::uint32_t imageIndex = m_context.device()
+                                   .acquireNextImageKHR(*m_swapchain.swapchain, timeOut, *m_imageAvailableSemaphores[m_currentFrame], nullptr)
+                                   .value;
 
     // update the uniform data
     {
-        void* const data = m_context.device().mapMemory(*m_uniformBuffersMemory.back(), 0, sizeof(ubo));
-        std::memcpy(data, &ubo, sizeof(ubo));
-        m_context.device().unmapMemory(*m_uniformBuffersMemory.back());
+        MapBoundsObject mapBounds;
+        void* const data = m_context.device().mapMemory(*m_noiseUniformBuffer.memory, 0, sizeof(mapBounds));
+        std::memcpy(data, &mapBounds, sizeof(mapBounds));
+        m_context.device().unmapMemory(*m_noiseUniformBuffer.memory);
     }
-
-    // submit offscreen pass
     vk::SubmitInfo submitInfo{};
 
-    std::array<vk::PipelineStageFlags, 1> noiseWaitStages = {
-        { vk::PipelineStageFlagBits::eColorAttachmentOutput }
-    };
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &*m_imageAvailableSemaphores[m_currentFrame];
-    submitInfo.pWaitDstStageMask = noiseWaitStages.data();
+    vk::Semaphore mainRenderpassWaitFor = *m_imageAvailableSemaphores[m_currentFrame];
+    vk::PipelineStageFlags mainRenderpassWaitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &*m_offscreenPassSemaphore;
+    // submit offscreen pass
+    if (m_renderHeightmap) {
+        std::array<vk::PipelineStageFlags, 1> noiseWaitStages = {
+            { vk::PipelineStageFlagBits::eColorAttachmentOutput }
+        };
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &*m_imageAvailableSemaphores[m_currentFrame];
+        submitInfo.pWaitDstStageMask = noiseWaitStages.data();
 
-    vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffer;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &*m_offscreenPassSemaphore;
 
-    m_context.graphicsQueue().submit({ submitInfo }, nullptr);
+        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffer;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+
+        m_context.graphicsQueue().submit({ submitInfo }, nullptr);
+
+        mainRenderpassWaitFor = *m_offscreenPassSemaphore;
+        mainRenderpassWaitStage = vk::PipelineStageFlagBits::eTessellationEvaluationShader;
+
+        m_renderHeightmap = false;
+    }
 
     // update the uniform data
     {
-        void* const data = m_context.device().mapMemory(*m_uniformBuffersMemory[imageIndex], 0, sizeof(ubo));
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.4f, 0.0f, 0.8f)));
+        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
+
+        ubo.eyePos = glm::vec4(m_eyePosition, 0);
+        ubo.view = glm::lookAt(m_eyePosition, m_eyePosition + m_lookDirection, m_upDirection);
+
+        ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
+        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
+
+        ubo.proj = glm::perspective(glm::radians(45.0f),
+            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
+        ubo.proj[1][1] *= -1; // invert Y axis
+
+        ubo.parallelCount = m_parallelCount;
+        ubo.meridianCount = m_meridianCount;
+
+        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
+
+        // update uniform buffer
+        void* const data = m_context.device().mapMemory(*m_uniformBuffers[imageIndex].memory, 0, sizeof(ubo));
         std::memcpy(data, &ubo, sizeof(ubo));
-        m_context.device().unmapMemory(*m_uniformBuffersMemory[imageIndex]);
+        m_context.device().unmapMemory(*m_uniformBuffers[imageIndex].memory);
     }
 
     // execute the command buffer
-    std::array<vk::PipelineStageFlags, 1> waitStages = {
-        { vk::PipelineStageFlagBits::eTessellationEvaluationShader }
-    };
     submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &*m_offscreenPassSemaphore;
-    submitInfo.pWaitDstStageMask = waitStages.data();
+    submitInfo.pWaitSemaphores = &mainRenderpassWaitFor;
+    submitInfo.pWaitDstStageMask = &mainRenderpassWaitStage;
 
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &*m_swapchain.commandBuffers[imageIndex];
@@ -472,6 +512,42 @@ void VulkanApplication::drawFrame()
     }
 
     m_currentFrame = (m_currentFrame + 1) % maxFramesInFlight;
+}
+
+void VulkanApplication::keyEvent(int key, int, int action, int)
+{
+    if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
+        m_context.toggleFullscreenMode();
+    }
+
+    if (key == GLFW_KEY_W) {
+        if (action == GLFW_PRESS) {
+            m_movingForward = true;
+        } else if (action == GLFW_RELEASE) {
+            m_movingForward = false;
+        }
+    }
+    if (key == GLFW_KEY_S) {
+        if (action == GLFW_PRESS) {
+            m_movingBackward = true;
+        } else if (action == GLFW_RELEASE) {
+            m_movingBackward = false;
+        }
+    }
+    if (key == GLFW_KEY_A) {
+        if (action == GLFW_PRESS) {
+            m_rotatingLeft = true;
+        } else if (action == GLFW_RELEASE) {
+            m_rotatingLeft = false;
+        }
+    }
+    if (key == GLFW_KEY_D) {
+        if (action == GLFW_PRESS) {
+            m_rotatingRight = true;
+        } else if (action == GLFW_RELEASE) {
+            m_rotatingRight = false;
+        }
+    }
 }
 
 } // namespace ou
