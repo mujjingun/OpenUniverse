@@ -18,7 +18,6 @@ layout(binding = 1) uniform sampler2D texSampler;
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 seed;
 
 const float thickness = 0.03f;
 const float pi = 3.1415926536;

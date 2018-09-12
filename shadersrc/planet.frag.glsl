@@ -18,8 +18,6 @@ layout(binding = 1) uniform sampler2D texSampler;
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 seed;
-layout(location = 2) in vec3 vertexToEye;
 
 const float pi = 3.1415926536;
 
@@ -49,6 +47,7 @@ void main() {
     float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.1f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
+    vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
     float specularFactor = dot(vertexToEye, lightReflect);
     if (specularFactor > 0) {
         specularFactor = pow(specularFactor, 16);

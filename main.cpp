@@ -392,11 +392,11 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
         m_eyePosition -= m_lookDirection * speed * dt;
     }
     if (m_rotatingLeft) {
-        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), -dt, m_lookDirection);
+        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), -dt * 1.5f, m_lookDirection);
         m_upDirection = rotate * glm::vec4(m_upDirection, 0.0f);
     }
     if (m_rotatingRight) {
-        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), dt, m_lookDirection);
+        glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), dt * 1.5f, m_lookDirection);
         m_upDirection = rotate * glm::vec4(m_upDirection, 0.0f);
     }
 
