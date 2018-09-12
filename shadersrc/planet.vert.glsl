@@ -45,7 +45,7 @@ void main() {
     vec3 norm = normalize(modelEyePos);
     mat3 rotate = rotationMatrix(normalize(cross(norm, vec3(0, 0, 1))), acos(norm.z));
 
-    float thetaEnd = acos(1.0f / length(modelEyePos));
+    float thetaEnd = acos(0.9f / length(modelEyePos));
     float theta = parallelIndex / ubo.parallelCount * thetaEnd;
     float phi = mix(0, 2 * pi, meridianIndex / ubo.meridianCount);
 

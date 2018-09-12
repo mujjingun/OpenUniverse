@@ -83,14 +83,16 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
     depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
     // make offscreen render target
+    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(4);
     noiseImage = context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, vk::Format::eR32G32B32A32Sfloat,
         vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
         vk::ImageAspectFlagBits::eColor);
-    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImage.format, properties.extent, sampleCount);
+    noiseDepthImage = context.makeDepthImage(properties.extent, noiseSampleCount);
+    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImage.format, properties.extent, noiseSampleCount);
 
     // make render pass
     renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, depthImage.format, 2);
-    noiseRenderPass = context.makeRenderPass(sampleCount, noiseImage.format, depthImage.format, 1);
+    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImage.format, depthImage.format, 1);
 
     // make pipelines
     pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
@@ -102,7 +104,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
         "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv",
         vk::PrimitiveTopology::ePatchList, false, {}, {});
 
-    noisePipeline = context.makePipeline(*pipelineLayout, properties.extent, *noiseRenderPass, 0, sampleCount,
+    noisePipeline = context.makePipeline(*pipelineLayout, properties.extent, *noiseRenderPass, 0, noiseSampleCount,
         "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
         vk::PrimitiveTopology::eTriangleFan, false, {}, {});
 
@@ -115,7 +117,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
         framebuffers.push_back(context.makeFramebuffer(*swapchainImageView, *depthImage.view,
             *multiSampleImage.view, *renderPass, properties.extent));
     }
-    noiseFramebuffer = context.makeFramebuffer(*noiseImage.view, *depthImage.view,
+    noiseFramebuffer = context.makeFramebuffer(*noiseImage.view, *noiseDepthImage.view,
         *noiseMultiSampleImage.view, *noiseRenderPass, properties.extent);
 }
 

@@ -18,6 +18,7 @@ struct SwapchainObject {
     ImageObject multiSampleImage;
     ImageObject depthImage;
     ImageObject noiseImage;
+    ImageObject noiseDepthImage;
     ImageObject noiseMultiSampleImage;
 
     vk::UniqueRenderPass renderPass;
