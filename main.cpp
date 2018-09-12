@@ -329,6 +329,12 @@ void VulkanApplication::run()
         app->m_deltaCursorPos = glm::vec2{ xpos, ypos } - app->m_lastCursorPos;
     });
 
+    glfwSetMouseButtonCallback(m_context.window(), [](GLFWwindow* window, int button, int action, int) {
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+    });
+
     // main loop
     while (!glfwWindowShouldClose(m_context.window())) {
         drawFrame();
@@ -518,6 +524,11 @@ void VulkanApplication::keyEvent(int key, int, int action, int)
 {
     if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
         m_context.toggleFullscreenMode();
+    }
+
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetInputMode(m_context.window(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
     }
 
     if (key == GLFW_KEY_W) {
