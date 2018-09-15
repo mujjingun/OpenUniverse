@@ -11,15 +11,16 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     vec4 lightDir;
     int parallelCount;
     int meridianCount;
+    uint noiseIndex;
 } ubo;
 
-layout(binding = 1) uniform sampler2D texSampler;
-
-layout(set = 0, binding = 2, std140) uniform MapBoundsObject {
+layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
     float mapCenterTheta;
     float mapCenterPhi;
     float mapSpanTheta;
 } bounds;
+
+layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
 
 layout(location = 0) out vec4 outColor;
 
@@ -59,7 +60,7 @@ void main() {
 
     vec2 texCoords = getTexCoords(cartCoords);
 
-    vec4 noise = texture(texSampler, texCoords);
+    vec4 noise = texture(texSamplers[ubo.noiseIndex], texCoords);
     float cloudNoise = noise.y;
     const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
 

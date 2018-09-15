@@ -15,6 +15,12 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     int meridianCount;
 } ubo;
 
+layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
+} bounds;
+
 layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;

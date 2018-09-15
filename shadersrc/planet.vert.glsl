@@ -13,13 +13,13 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     int meridianCount;
 } ubo;
 
-layout(location = 0) out vec3 outPos;
-
-layout(set = 0, binding = 2, std140) uniform MapBoundsObject {
+layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
     float mapCenterTheta;
     float mapCenterPhi;
     float mapSpanTheta;
 } bounds;
+
+layout (location=0) out vec3 outPos;
 
 mat3 rotationMatrix(vec3 axis, float angle)
 {

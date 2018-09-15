@@ -31,7 +31,7 @@ struct SwapchainObject {
     std::vector<vk::UniqueFramebuffer> framebuffers{};
 
     // noise render pass
-    ImageObject noiseImage;
+    std::vector<ImageObject> noiseImages{};
     ImageObject noiseDepthImage;
     ImageObject noiseMultiSampleImage;
 
@@ -88,14 +88,15 @@ private:
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
-    vk::UniqueSemaphore m_offscreenPassSemaphore;
     std::vector<vk::UniqueFence> m_inFlightFences;
+    std::vector<vk::UniqueFence> m_offscreenFence;
 
     ImageObject m_textureImage;
     vk::UniqueSampler m_sampler;
 
     std::vector<BufferObject> m_uniformBuffers{};
-    BufferObject m_mapBoundsUniformBuffer;
+    std::vector<BufferObject> m_mapBoundsUniformBuffers{};
+    std::vector<BufferObject> m_renderMapBoundsUniformBuffers{};
 
     std::size_t m_currentFrame = 0;
 
@@ -109,7 +110,6 @@ private:
 
     // planet related stuff
     int m_parallelCount, m_meridianCount;
-    bool m_renderHeightmap;
     float m_planetRotateAngle;
 
     // player camera
@@ -123,7 +123,9 @@ private:
     glm::vec2 m_deltaCursorPos;
 
     // map related stuff
-    MapBoundsObject m_currentMapBounds;
+    bool m_updateHeightmap, m_renderingHeightmap;
+    std::size_t m_lastRenderedIndex;
+    std::vector<MapBoundsObject> m_mapBounds;
 };
 
 } // namespace ou

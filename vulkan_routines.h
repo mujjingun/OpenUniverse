@@ -76,6 +76,7 @@ public:
     vk::Device device() const;
     GLFWwindow* window() const;
     vk::Queue graphicsQueue() const;
+    vk::Queue graphicsQueue2() const;
     vk::Queue presentQueue() const;
     int refreshRate() const;
     vk::Extent2D screenResolution() const;
@@ -87,13 +88,13 @@ public:
     SwapchainProperties selectSwapchainProperties() const;
 
     vk::UniqueDescriptorSetLayout makeDescriptorSetLayout(const std::vector<vk::DescriptorType>& types,
-        const std::vector<vk::ShaderStageFlags> &stages) const;
+        const std::vector<vk::ShaderStageFlags> &stages, const std::vector<uint32_t> &counts) const;
     vk::UniqueDescriptorPool makeDescriptorPool(uint32_t size, std::vector<vk::DescriptorType> const& types) const;
     std::vector<vk::DescriptorSet> makeDescriptorSets(vk::DescriptorPool pool,
         vk::DescriptorSetLayout layout, std::uint32_t size) const;
 
     DescriptorSetObject makeDescriptorSet(uint32_t size, std::vector<vk::DescriptorType> const& types,
-        std::vector<vk::ShaderStageFlags> const& stages) const;
+        std::vector<vk::ShaderStageFlags> const& stages, const std::vector<uint32_t> &counts) const;
 
     vk::UniqueSwapchainKHR makeSwapchain(SwapchainProperties props, vk::SwapchainKHR oldSwapchain = nullptr) const;
     std::vector<vk::Image> retrieveSwapchainImages(vk::SwapchainKHR swapchain) const;
@@ -130,12 +131,14 @@ public:
         vk::RenderPass renderPass, vk::Extent2D swapChainExtent) const;
 
     std::vector<vk::UniqueSemaphore> makeSemaphores(std::uint32_t count) const;
-    std::vector<vk::UniqueFence> makeFences(std::uint32_t count) const;
+    std::vector<vk::UniqueFence> makeFences(std::uint32_t count, bool signaled) const;
 
     vk::UniqueBuffer makeBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
         vk::SharingMode sharingMode = vk::SharingMode::eExclusive) const;
 
     vk::UniqueDeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
+
+    void updateMemory(vk::DeviceMemory memory, void* ptr, std::size_t size);
 
     BufferObject constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData, std::size_t bufferSize) const;
 
@@ -169,7 +172,7 @@ private:
 
     vk::UniqueDevice m_device;
 
-    vk::Queue m_graphicsQueue, m_presentQueue;
+    vk::Queue m_graphicsQueue, m_graphicsQueue2, m_presentQueue;
 
     vk::UniqueCommandPool m_commandPool;
 };

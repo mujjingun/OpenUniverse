@@ -59,6 +59,7 @@ struct UniformBufferObject {
     glm::vec4 lightDir;
     std::int32_t parallelCount;
     std::int32_t meridianCount;
+    std::uint32_t readyNoiseImageIndex;
 };
 
 SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
@@ -83,10 +84,11 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
     // make descriptor sets
     descriptorSet = context.makeDescriptorSet(properties.imageCount,
-        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eCombinedImageSampler, vk::DescriptorType::eUniformBuffer },
+        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eCombinedImageSampler },
         { vk::ShaderStageFlagBits::eAll,
-            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
-            vk::ShaderStageFlagBits::eAll });
+            vk::ShaderStageFlagBits::eAll,
+            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
+        { 1, 1, 2 });
 
     // make pipelines
     pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
@@ -110,18 +112,21 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     // make offscreen render target
     const std::size_t noiseFrameBuffersCount = 2;
     const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(2);
-    const vk::Extent2D noiseImageExtent = { properties.extent.width * 2, properties.extent.height * 2 };
-    noiseImage = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, vk::Format::eR32G32B32A32Sfloat,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::ImageAspectFlagBits::eColor);
-    noiseDepthImage = context.makeDepthImage(noiseImageExtent, noiseSampleCount);
-    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImage.format, noiseImageExtent, noiseSampleCount);
+    const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
+    const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
 
-    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImage.format, depthImage.format, 1);
+    for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
+        noiseImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseImageFormat,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::ImageAspectFlagBits::eColor));
+    }
+    noiseDepthImage = context.makeDepthImage(noiseImageExtent, noiseSampleCount);
+    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImageFormat, noiseImageExtent, noiseSampleCount);
+
+    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImageFormat, depthImage.format, 1);
 
     noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
-        { vk::DescriptorType::eUniformBuffer },
-        { vk::ShaderStageFlagBits::eAll });
+        { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eAll }, { 1 });
 
     noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
     noisePipeline = context.makePipeline(*noisePipelineLayout, noiseImageExtent, *noiseRenderPass, 0, noiseSampleCount,
@@ -131,7 +136,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
 
     for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-        noiseFramebuffers.push_back(context.makeFramebuffer(*noiseImage.view, *noiseDepthImage.view,
+        noiseFramebuffers.push_back(context.makeFramebuffer(*noiseImages[i].view, *noiseDepthImage.view,
             *noiseMultiSampleImage.view, *noiseRenderPass, noiseImageExtent));
     }
 }
@@ -148,8 +153,8 @@ VulkanApplication::VulkanApplication()
     // make semaphores for synchronizing frame drawing operations
     , m_imageAvailableSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_renderFinishedSemaphores(m_context.makeSemaphores(maxFramesInFlight))
-    , m_offscreenPassSemaphore(std::move(m_context.makeSemaphores(1)[0]))
-    , m_inFlightFences(m_context.makeFences(maxFramesInFlight))
+    , m_inFlightFences(m_context.makeFences(maxFramesInFlight, true))
+    , m_offscreenFence(m_context.makeFences(static_cast<std::uint32_t>(m_swapchain.noiseImages.size()), false))
 
     // make textures
     , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
@@ -159,13 +164,16 @@ VulkanApplication::VulkanApplication()
 
     , m_parallelCount(200)
     , m_meridianCount(200)
-    , m_renderHeightmap(true)
+    , m_mapBounds(m_swapchain.noiseImages.size())
 {
     // make uniform buffers
     for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
         m_uniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
+        m_renderMapBoundsUniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
     }
-    m_mapBoundsUniformBuffer = m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject));
+    for (std::size_t i = 0; i < m_swapchain.noiseImages.size(); ++i) {
+        m_mapBoundsUniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
+    }
 
     // record draw commands
     recordDrawCommands();
@@ -174,7 +182,8 @@ VulkanApplication::VulkanApplication()
 void VulkanApplication::refreshSwapchain()
 {
     m_context.device().waitIdle();
-    m_renderHeightmap = true;
+
+    m_updateHeightmap = true;
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
@@ -212,7 +221,7 @@ void VulkanApplication::recordDrawCommands()
             std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = *m_mapBoundsUniformBuffer.buffer;
+            bufferInfo.buffer = *m_mapBoundsUniformBuffers[index].buffer;
             bufferInfo.offset = 0;
             bufferInfo.range = VK_WHOLE_SIZE;
 
@@ -230,7 +239,7 @@ void VulkanApplication::recordDrawCommands()
             noiseRenderPassInfo.framebuffer = *m_swapchain.noiseFramebuffers[index];
             noiseRenderPassInfo.renderArea.offset.x = 0;
             noiseRenderPassInfo.renderArea.offset.y = 0;
-            noiseRenderPassInfo.renderArea.extent = m_swapchain.noiseImage.extent;
+            noiseRenderPassInfo.renderArea.extent = m_swapchain.noiseImages[index].extent;
             noiseRenderPassInfo.clearValueCount = clearValues.size();
             noiseRenderPassInfo.pClearValues = clearValues.data();
 
@@ -270,29 +279,33 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[0].descriptorCount = 1;
             descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-            vk::DescriptorImageInfo imageInfo{};
-            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            imageInfo.imageView = *m_swapchain.noiseImage.view;
-            imageInfo.sampler = *m_sampler;
+            vk::DescriptorBufferInfo mapBoundsUniformBufferInfo{};
+            mapBoundsUniformBufferInfo.buffer = *m_renderMapBoundsUniformBuffers[index].buffer;
+            mapBoundsUniformBufferInfo.offset = 0;
+            mapBoundsUniformBufferInfo.range = VK_WHOLE_SIZE;
 
             descriptorWrites[1].dstSet = m_swapchain.descriptorSet.sets[index];
             descriptorWrites[1].dstBinding = 1;
             descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[1].descriptorType = vk::DescriptorType::eUniformBuffer;
             descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &imageInfo;
+            descriptorWrites[1].pBufferInfo = &mapBoundsUniformBufferInfo;
 
-            vk::DescriptorBufferInfo mapBoundsUniformBufferInfo{};
-            mapBoundsUniformBufferInfo.buffer = *m_mapBoundsUniformBuffer.buffer;
-            mapBoundsUniformBufferInfo.offset = 0;
-            mapBoundsUniformBufferInfo.range = VK_WHOLE_SIZE;
+            std::vector<vk::DescriptorImageInfo> imageInfos{};
+            for (auto const& image : m_swapchain.noiseImages) {
+                vk::DescriptorImageInfo imageInfo;
+                imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                imageInfo.imageView = *image.view;
+                imageInfo.sampler = *m_sampler;
+                imageInfos.push_back(imageInfo);
+            }
 
             descriptorWrites[2].dstSet = m_swapchain.descriptorSet.sets[index];
             descriptorWrites[2].dstBinding = 2;
             descriptorWrites[2].dstArrayElement = 0;
-            descriptorWrites[2].descriptorType = vk::DescriptorType::eUniformBuffer;
-            descriptorWrites[2].descriptorCount = 1;
-            descriptorWrites[2].pBufferInfo = &mapBoundsUniformBufferInfo;
+            descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[2].descriptorCount = static_cast<std::uint32_t>(imageInfos.size());
+            descriptorWrites[2].pImageInfo = imageInfos.data();
 
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
@@ -364,8 +377,8 @@ void VulkanApplication::drawFrame()
         ubo.view = glm::lookAt(m_eyePosition, m_eyePosition + m_lookDirection, m_upDirection);
 
         ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
-        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
 
+        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
         ubo.proj[1][1] *= -1; // invert Y axis
@@ -375,59 +388,74 @@ void VulkanApplication::drawFrame()
 
         ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
 
-        void* memPtr = m_context.device().mapMemory(*m_uniformBuffers[imageIndex].memory, 0, sizeof(ubo));
-        std::memcpy(memPtr, &ubo, sizeof(ubo));
-        m_context.device().unmapMemory(*m_uniformBuffers[imageIndex].memory);
-
-        // determine map bounds
-        glm::vec3 oldMapCenter = {std::sin(m_currentMapBounds.mapCenterTheta) * std::cos(m_currentMapBounds.mapCenterPhi),
-                                  std::sin(m_currentMapBounds.mapCenterTheta) * std::sin(m_currentMapBounds.mapCenterPhi),
-                                  std::cos(m_currentMapBounds.mapCenterTheta)};
-        glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
-        float angle = std::acos(glm::dot(oldMapCenter, normEye));
-        float newMapSpan = std::acos(1 / length(ubo.modelEyePos));
-        if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2 || newMapSpan > m_currentMapBounds.mapSpanTheta || angle > newMapSpan) {
-            m_currentMapBounds.mapCenterTheta = std::acos(normEye.z);
-            m_currentMapBounds.mapCenterPhi = std::atan2(normEye.y, normEye.x);
-            if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2)
-                m_currentMapBounds.mapSpanTheta /= 2;
-            else if (newMapSpan > m_currentMapBounds.mapSpanTheta) {
-                m_currentMapBounds.mapSpanTheta *= 2;
-            }
-            m_renderHeightmap = true;
-            std::cout << "update map span to " << m_currentMapBounds.mapSpanTheta / glm::pi<float>() << "pi" << std::endl;
+        std::size_t nextOffscreenIndex = (m_lastRenderedIndex + 1) % m_swapchain.noiseImages.size();
+        if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_offscreenFence[nextOffscreenIndex]) == vk::Result::eSuccess) {
+            m_context.device().resetFences({ *m_offscreenFence[nextOffscreenIndex] });
+            m_lastRenderedIndex = nextOffscreenIndex;
+            m_renderingHeightmap = false;
+            //std::cout << "finished. current index: " << m_lastRenderedIndex << std::endl;
         }
+        ubo.readyNoiseImageIndex = static_cast<std::uint32_t>(m_lastRenderedIndex);
 
-        // TODO: make sure mapBoundsUniformBuffer doesn't get written during rendering
-        memPtr = m_context.device().mapMemory(*m_mapBoundsUniformBuffer.memory, 0, sizeof(m_currentMapBounds));
-        std::memcpy(memPtr, &m_currentMapBounds, sizeof(m_currentMapBounds));
-        m_context.device().unmapMemory(*m_mapBoundsUniformBuffer.memory);
+        m_context.updateMemory(*m_uniformBuffers[imageIndex].memory, &ubo, sizeof(UniformBufferObject));
+        m_context.updateMemory(*m_renderMapBoundsUniformBuffers[imageIndex].memory, &m_mapBounds[m_lastRenderedIndex], sizeof(MapBoundsObject));
+
+        // update map bounds
+        if (!m_renderingHeightmap) {
+            const MapBoundsObject mapBounds = m_mapBounds[m_lastRenderedIndex];
+            const glm::vec3 oldMapCenter = { std::sin(mapBounds.mapCenterTheta) * std::cos(mapBounds.mapCenterPhi),
+                std::sin(mapBounds.mapCenterTheta) * std::sin(mapBounds.mapCenterPhi),
+                std::cos(mapBounds.mapCenterTheta) };
+
+            const glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
+            const float angle = std::acos(glm::dot(oldMapCenter, normEye));
+            const float newMapSpan = std::acos(1.0f / length(ubo.modelEyePos));
+            const bool tooLarge = newMapSpan < mapBounds.mapSpanTheta / 2;
+            const bool tooSmall = newMapSpan > mapBounds.mapSpanTheta;
+            const bool outOfRange = angle > newMapSpan;
+
+            MapBoundsObject newMapBounds;
+            if (tooLarge || tooSmall || outOfRange) {
+                newMapBounds.mapCenterTheta = std::acos(normEye.z);
+                newMapBounds.mapCenterPhi = std::atan2(normEye.y, normEye.x);
+
+                if (tooLarge)
+                    newMapBounds.mapSpanTheta = mapBounds.mapSpanTheta / 2;
+                else if (tooSmall) {
+                    newMapBounds.mapSpanTheta = mapBounds.mapSpanTheta * 2;
+                } else {
+                    newMapBounds.mapSpanTheta = mapBounds.mapSpanTheta;
+                }
+
+                m_updateHeightmap = true;
+                m_mapBounds[nextOffscreenIndex] = newMapBounds;
+
+                //std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi..." << std::endl;
+            }
+
+            m_context.updateMemory(*m_mapBoundsUniformBuffers[nextOffscreenIndex].memory, &m_mapBounds[nextOffscreenIndex], sizeof(MapBoundsObject));
+        }
     }
     vk::SubmitInfo submitInfo{};
 
-    std::vector<vk::Semaphore> mainRenderpassWaitFor = { *m_imageAvailableSemaphores[m_currentFrame] };
-    std::vector<vk::PipelineStageFlags> mainRenderpassWaitStage = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
-
     // submit offscreen pass
-    if (m_renderHeightmap) {
-        submitInfo.waitSemaphoreCount = 0;
+    if (m_updateHeightmap) {
+        std::size_t nextOffscreenIndex = (m_lastRenderedIndex + 1) % m_swapchain.noiseImages.size();
 
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &*m_offscreenPassSemaphore;
-
-        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffers[0];
+        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &offscreenCommandBuffer;
 
-        m_context.graphicsQueue().submit({ submitInfo }, nullptr);
+        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[nextOffscreenIndex]);
 
-        mainRenderpassWaitFor.push_back(*m_offscreenPassSemaphore);
-        mainRenderpassWaitStage.push_back(vk::PipelineStageFlagBits::eTessellationEvaluationShader);
-
-        m_renderHeightmap = false;
+        m_updateHeightmap = false;
+        m_renderingHeightmap = true;
     }
 
     // execute the command buffer
+    std::vector<vk::Semaphore> mainRenderpassWaitFor = { *m_imageAvailableSemaphores[m_currentFrame] };
+    std::vector<vk::PipelineStageFlags> mainRenderpassWaitStage = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+
     submitInfo.waitSemaphoreCount = static_cast<std::uint32_t>(mainRenderpassWaitFor.size());
     submitInfo.pWaitSemaphores = mainRenderpassWaitFor.data();
     submitInfo.pWaitDstStageMask = mainRenderpassWaitStage.data();
@@ -467,13 +495,22 @@ void VulkanApplication::run()
     using namespace std::chrono;
     m_lastFpsTime = m_lastFrameTime = system_clock::now();
     m_fpsFrameCounter = m_fpsMeasurementsCount = 0;
+
+    m_planetRotateAngle = 0.0f;
+
     m_eyePosition = glm::vec3(0.0f, 3.0f, 0.0f);
     m_lookDirection = glm::vec3(0.0f, -1.0f, 0.0f);
     m_upDirection = glm::vec3(0.0f, 0.0f, 1.0f);
+    m_movingForward = m_movingBackward = m_rotatingLeft = m_rotatingRight = false;
+
     m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
-    m_currentMapBounds.mapCenterTheta = glm::radians(45.0f);
-    m_currentMapBounds.mapCenterPhi = 0;
-    m_currentMapBounds.mapSpanTheta = glm::radians(180.0f);
+
+    m_updateHeightmap = true;
+    m_renderingHeightmap = false;
+    m_lastRenderedIndex = 0;
+    m_mapBounds[m_lastRenderedIndex].mapCenterTheta = glm::radians(45.0f);
+    m_mapBounds[m_lastRenderedIndex].mapCenterPhi = 0;
+    m_mapBounds[m_lastRenderedIndex].mapSpanTheta = glm::radians(180.0f);
 
     glfwSetWindowUserPointer(m_context.window(), this);
     glfwSetKeyCallback(m_context.window(), [](GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -481,7 +518,7 @@ void VulkanApplication::run()
         app->keyEvent(key, scancode, action, mods);
     });
 
-    glfwSetInputMode(m_context.window(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    //glfwSetInputMode(m_context.window(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetCursorPosCallback(m_context.window(), [](GLFWwindow* window, double xpos, double ypos) {
         auto* app = static_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
         if (!std::isfinite(app->m_lastCursorPos.x)) {
@@ -540,7 +577,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    m_planetRotateAngle += dt / 128.0f * glm::radians(90.0f);
+    //m_planetRotateAngle += dt / 128.0f * glm::radians(90.0f);
 
     const float sensitivity = 0.005f;
     glm::vec3 right = glm::cross(m_lookDirection, m_upDirection);
@@ -550,10 +587,10 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     m_upDirection = rotate1 * glm::vec4(m_upDirection, 1.0f);
 
     float distance = glm::distance(m_eyePosition, glm::vec3(0)) - 1.0f;
-    float speed = distance + 0.1f;
+    float speed = distance + 0.02f;
     if (m_movingForward) {
         glm::vec3 velocity = m_lookDirection * speed * dt;
-        velocity -= glm::proj(velocity, m_eyePosition) * glm::clamp(1.0f - 5.0f * distance, 0.0f, 1.0f);
+        velocity -= glm::proj(velocity, m_eyePosition) * glm::clamp(1.0f - 10.0f * distance, 0.0f, 1.0f);
         m_eyePosition += velocity;
     }
     if (m_movingBackward) {

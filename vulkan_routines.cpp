@@ -304,19 +304,24 @@ vk::UniqueDevice ou::makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDe
     }
 
     // create logical device
-    std::set<std::uint32_t> uniqueQueueFamilyIndices = {
-        queueFamilies.graphics, queueFamilies.presentation
-    };
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
-    for (std::uint32_t uniqueQueueFamilyIndex : uniqueQueueFamilyIndices) {
-        vk::DeviceQueueCreateInfo queueCreateInfo{};
-        queueCreateInfo.queueFamilyIndex = uniqueQueueFamilyIndex;
 
-        std::array<float, 1> queuePriorities = { { 1.0f } };
-        queueCreateInfo.queueCount = queuePriorities.size();
-        queueCreateInfo.pQueuePriorities = queuePriorities.data();
+    vk::DeviceQueueCreateInfo graphicsQueueCreateInfo{};
+    graphicsQueueCreateInfo.queueFamilyIndex = queueFamilies.graphics;
 
-        queueCreateInfos.push_back(queueCreateInfo);
+    std::array<float, 2> queuePriorities = { { 1.0f, 0.0f } };
+    graphicsQueueCreateInfo.queueCount = queuePriorities.size();
+    graphicsQueueCreateInfo.pQueuePriorities = queuePriorities.data();
+    queueCreateInfos.push_back(graphicsQueueCreateInfo);
+
+    if (queueFamilies.graphics != queueFamilies.presentation) {
+        vk::DeviceQueueCreateInfo presentQueueCreateInfo{};
+        presentQueueCreateInfo.queueFamilyIndex = queueFamilies.presentation;
+
+        float presentPriority = 1.0f;
+        presentQueueCreateInfo.queueCount = 1;
+        presentQueueCreateInfo.pQueuePriorities = &presentPriority;
+        queueCreateInfos.push_back(presentQueueCreateInfo);
     }
 
     vk::PhysicalDeviceFeatures deviceFeatures{};
@@ -378,6 +383,7 @@ ou::GraphicsContext::GraphicsContext(int width, int height, bool fullscreen)
 
     // retrieve the graphics queue handles
     , m_graphicsQueue(m_device->getQueue(m_queueIndices.graphics, 0))
+    , m_graphicsQueue2(m_device->getQueue(m_queueIndices.graphics, 1))
     , m_presentQueue(m_device->getQueue(m_queueIndices.presentation, 0))
 
     // make command pool
@@ -398,6 +404,11 @@ GLFWwindow* ou::GraphicsContext::window() const
 vk::Queue ou::GraphicsContext::graphicsQueue() const
 {
     return m_graphicsQueue;
+}
+
+vk::Queue ou::GraphicsContext::graphicsQueue2() const
+{
+    return m_graphicsQueue2;
 }
 
 vk::Queue ou::GraphicsContext::presentQueue() const
@@ -519,7 +530,7 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
 }
 
 vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout(std::vector<vk::DescriptorType> const& types,
-    std::vector<vk::ShaderStageFlags> const& stages) const
+    std::vector<vk::ShaderStageFlags> const& stages, std::vector<std::uint32_t> const& counts) const
 {
     assert(types.size() == stages.size());
     std::vector<vk::DescriptorSetLayoutBinding> layoutBindings(types.size());
@@ -527,7 +538,7 @@ vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout(std::
     for (std::size_t index = 0; index < layoutBindings.size(); ++index) {
         layoutBindings[index].binding = static_cast<std::uint32_t>(index);
         layoutBindings[index].descriptorType = types[index];
-        layoutBindings[index].descriptorCount = 1;
+        layoutBindings[index].descriptorCount = counts[index];
         layoutBindings[index].stageFlags = stages[index];
         layoutBindings[index].pImmutableSamplers = nullptr;
     }
@@ -568,10 +579,10 @@ std::vector<vk::DescriptorSet> ou::GraphicsContext::makeDescriptorSets(vk::Descr
 }
 
 ou::DescriptorSetObject ou::GraphicsContext::makeDescriptorSet(uint32_t size, std::vector<vk::DescriptorType> const& types,
-    const std::vector<vk::ShaderStageFlags> &stages) const
+    const std::vector<vk::ShaderStageFlags> &stages, std::vector<std::uint32_t> const& counts) const
 {
     DescriptorSetObject set;
-    set.layout = makeDescriptorSetLayout(types, stages);
+    set.layout = makeDescriptorSetLayout(types, stages, counts);
     set.pool = makeDescriptorPool(size, types);
     set.sets = makeDescriptorSets(*set.pool, *set.layout, size);
 
@@ -1156,12 +1167,14 @@ std::vector<vk::UniqueSemaphore> ou::GraphicsContext::makeSemaphores(uint32_t co
     return semaphores;
 }
 
-std::vector<vk::UniqueFence> ou::GraphicsContext::makeFences(uint32_t count) const
+std::vector<vk::UniqueFence> ou::GraphicsContext::makeFences(uint32_t count, bool signaled) const
 {
     std::vector<vk::UniqueFence> fences(count);
     for (auto& fence : fences) {
         vk::FenceCreateInfo fenceInfo{};
-        fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+        if (signaled) {
+            fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+        }
 
         fence = m_device->createFenceUnique(fenceInfo);
     }
@@ -1192,6 +1205,13 @@ vk::UniqueDeviceMemory ou::GraphicsContext::allocateBufferMemory(vk::Buffer buff
     m_device->bindBufferMemory(buffer, bufferMemory.get(), 0);
 
     return bufferMemory;
+}
+
+void ou::GraphicsContext::updateMemory(vk::DeviceMemory memory, void *ptr, std::size_t size)
+{
+    void* memPtr = m_device->mapMemory(memory, 0, size);
+    std::memcpy(memPtr, ptr, size);
+    m_device->unmapMemory(memory);
 }
 
 static void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size,
