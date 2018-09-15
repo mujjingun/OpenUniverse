@@ -92,11 +92,11 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
     terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
         "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv",
-        vk::PrimitiveTopology::ePatchList, false, {}, {});
+        vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
     atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
         "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv",
-        vk::PrimitiveTopology::ePatchList, false, {}, {});
+        vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
     // make command buffers
     commandBuffers = context.allocateCommandBuffers(properties.imageCount);
@@ -108,8 +108,8 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     }
 
     // make offscreen render target
-    const std::size_t noiseFrameBuffersCount = 1;
-    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(4);
+    const std::size_t noiseFrameBuffersCount = 2;
+    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(2);
     const vk::Extent2D noiseImageExtent = { properties.extent.width * 2, properties.extent.height * 2 };
     noiseImage = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, vk::Format::eR32G32B32A32Sfloat,
         vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
@@ -126,7 +126,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
     noisePipeline = context.makePipeline(*noisePipelineLayout, noiseImageExtent, *noiseRenderPass, 0, noiseSampleCount,
         "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
-        vk::PrimitiveTopology::eTriangleFan, false, {}, {});
+        vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
 
     noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
 
@@ -380,14 +380,18 @@ void VulkanApplication::drawFrame()
         m_context.device().unmapMemory(*m_uniformBuffers[imageIndex].memory);
 
         // determine map bounds
+        glm::vec3 oldMapCenter = {std::sin(m_currentMapBounds.mapCenterTheta) * std::cos(m_currentMapBounds.mapCenterPhi),
+                                  std::sin(m_currentMapBounds.mapCenterTheta) * std::sin(m_currentMapBounds.mapCenterPhi),
+                                  std::cos(m_currentMapBounds.mapCenterTheta)};
+        glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
+        float angle = std::acos(glm::dot(oldMapCenter, normEye));
         float newMapSpan = std::acos(1 / length(ubo.modelEyePos));
-        if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2 || newMapSpan > m_currentMapBounds.mapSpanTheta) {
-            glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
+        if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2 || newMapSpan > m_currentMapBounds.mapSpanTheta || angle > newMapSpan) {
             m_currentMapBounds.mapCenterTheta = std::acos(normEye.z);
             m_currentMapBounds.mapCenterPhi = std::atan2(normEye.y, normEye.x);
             if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2)
                 m_currentMapBounds.mapSpanTheta /= 2;
-            else {
+            else if (newMapSpan > m_currentMapBounds.mapSpanTheta) {
                 m_currentMapBounds.mapSpanTheta *= 2;
             }
             m_renderHeightmap = true;
@@ -523,6 +527,10 @@ void VulkanApplication::run()
         m_lastFrameTime = currentTime;
     }
 
+    // TODO: temp workaround for freezing in fullscreen mode
+    if (m_context.isFullscreen()) {
+        m_context.toggleFullscreenMode();
+    }
     std::cout << "Average fps: " << std::setprecision(0) << std::fixed << m_averageFps << std::endl;
     m_context.device().waitIdle();
 }

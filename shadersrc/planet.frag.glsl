@@ -60,6 +60,7 @@ void main() {
     vec4 noiseTex = texture(texSampler, texCoords);
     float noise = noiseTex.x;
     float biome = noiseTex.z;
+    float temp = noiseTex.w;
 
     vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
@@ -68,6 +69,7 @@ void main() {
     vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.8f) * (1.0f - pow(abs(noise), 0.5) * .3f), 1.0f);
     float oceanOrTerrain = noise > 0? 1: 0;
     vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
+    color = mix(vec4(1.0f), color, smoothstep(0.0f, 0.01f, temp));
 
     vec3 modelPos = cartCoords * mix(1.0f, 1.0f + noise * 0.01f, oceanOrTerrain);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;

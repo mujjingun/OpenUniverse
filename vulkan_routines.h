@@ -81,6 +81,7 @@ public:
     vk::Extent2D screenResolution() const;
 
     // member functions
+    bool isFullscreen() const;
     void toggleFullscreenMode() const;
 
     SwapchainProperties selectSwapchainProperties() const;
@@ -117,7 +118,7 @@ public:
     vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
         vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
         const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
-        vk::PrimitiveTopology primitiveType,
+        vk::PrimitiveTopology primitiveType, bool enableBlending,
         bool attachVertexData,
         vk::VertexInputBindingDescription bindingDescription,
         const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const;

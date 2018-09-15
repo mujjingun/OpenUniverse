@@ -76,7 +76,7 @@ void main(void)
     vec2 texCoords = getTexCoords(pos);
 
     vec4 noiseTex = texture(texSampler, texCoords);
-    const float noise = max(0, texture(texSampler, texCoords).x);
+    const float noise = max(0, noiseTex.r);
 
     vec3 modelPos = pos * (1.0f + vec3(noise * 0.01f));
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;

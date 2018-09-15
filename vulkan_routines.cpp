@@ -413,14 +413,18 @@ int ou::GraphicsContext::refreshRate() const
 vk::Extent2D ou::GraphicsContext::screenResolution() const
 {
     return { static_cast<std::uint32_t>(m_videoMode->width),
-        static_cast<std::uint32_t>(m_videoMode->height) };
+                static_cast<std::uint32_t>(m_videoMode->height) };
+}
+
+bool ou::GraphicsContext::isFullscreen() const
+{
+    GLFWmonitor* monitor = glfwGetWindowMonitor(m_window.get());
+    return monitor != nullptr;
 }
 
 void ou::GraphicsContext::toggleFullscreenMode() const
 {
-    GLFWmonitor* monitor = glfwGetWindowMonitor(m_window.get());
-
-    if (!monitor) {
+    if (!isFullscreen()) {
         // enable fullscreen mode
         glfwSetWindowMonitor(m_window.get(), glfwGetPrimaryMonitor(), 0, 0,
             static_cast<int>(screenResolution().width), static_cast<int>(screenResolution().height), refreshRate());
@@ -964,7 +968,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
     vk::PrimitiveTopology primitiveType,
-    bool attachVertexData,
+    bool enableBlending, bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const
 {
@@ -1062,7 +1066,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR
         | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.blendEnable = enableBlending;
     colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha; // Optional
     colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha; // Optional
     colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd; // Optional

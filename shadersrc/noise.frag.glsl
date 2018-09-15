@@ -165,6 +165,12 @@ void main() {
             + cnoise(seed_3 * 2) / 2
             + cnoise(seed_3 * 8) / 4;
 
-    outColor = vec4(noise_1, noise_2, noise_3, 1.0f);
+    const vec3 seed_4 = cartesian * 2 + vec3(-5.0f);
+    const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 15.0f
+            + cnoise(seed_4) * 2.0f
+            + cnoise(seed_4 * 2) * 1.0f
+            + cnoise(seed_4 * 8) * 1.0f;
+
+    outColor = vec4(noise_1, noise_2, noise_3, noise_4);
 }
 
