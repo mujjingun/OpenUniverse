@@ -8,6 +8,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "glm/gtx/intersect.hpp"
+#include "glm/gtx/projection.hpp"
 #include "glm/gtx/string_cast.hpp"
 
 namespace ou {
@@ -49,9 +50,6 @@ ModelObject::ModelObject(GraphicsContext const& context,
 {
 }
 
-struct MapBoundsObject {
-};
-
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
@@ -63,13 +61,11 @@ struct UniformBufferObject {
     std::int32_t meridianCount;
 };
 
-SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorSetLayout descriptorSetLayout,
-    SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
+SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
 {
     // make swapchain
     swapchain = context.makeSwapchain(properties, oldSwapchain);
     swapchainImages = context.retrieveSwapchainImages(*swapchain);
-    const auto swapchainImageCount = static_cast<std::uint32_t>(swapchainImages.size());
     for (const auto& image : swapchainImages) {
         swapchainImageViews.push_back(context.makeImageView(image,
             properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
@@ -82,20 +78,18 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
     // make depth buffer
     depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
-    // make offscreen render target
-    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(4);
-    noiseImage = context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, vk::Format::eR32G32B32A32Sfloat,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::ImageAspectFlagBits::eColor);
-    noiseDepthImage = context.makeDepthImage(properties.extent, noiseSampleCount);
-    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImage.format, properties.extent, noiseSampleCount);
-
     // make render pass
     renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, depthImage.format, 2);
-    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImage.format, depthImage.format, 1);
+
+    // make descriptor sets
+    descriptorSet = context.makeDescriptorSet(properties.imageCount,
+        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eCombinedImageSampler, vk::DescriptorType::eUniformBuffer },
+        { vk::ShaderStageFlagBits::eAll,
+            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
+            vk::ShaderStageFlagBits::eAll });
 
     // make pipelines
-    pipelineLayout = context.makePipelineLayout(descriptorSetLayout);
+    pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
     terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
         "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv",
         vk::PrimitiveTopology::ePatchList, false, {}, {});
@@ -104,21 +98,42 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, vk::DescriptorS
         "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv",
         vk::PrimitiveTopology::ePatchList, false, {}, {});
 
-    noisePipeline = context.makePipeline(*pipelineLayout, properties.extent, *noiseRenderPass, 0, noiseSampleCount,
-        "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
-        vk::PrimitiveTopology::eTriangleFan, false, {}, {});
-
     // make command buffers
-    commandBuffers = context.allocateCommandBuffers(swapchainImageCount);
-    noiseCommandBuffer = std::move(context.allocateCommandBuffers(1)[0]);
+    commandBuffers = context.allocateCommandBuffers(properties.imageCount);
 
     // make framebuffers
     for (auto const& swapchainImageView : swapchainImageViews) {
         framebuffers.push_back(context.makeFramebuffer(*swapchainImageView, *depthImage.view,
             *multiSampleImage.view, *renderPass, properties.extent));
     }
-    noiseFramebuffer = context.makeFramebuffer(*noiseImage.view, *noiseDepthImage.view,
-        *noiseMultiSampleImage.view, *noiseRenderPass, properties.extent);
+
+    // make offscreen render target
+    const std::size_t noiseFrameBuffersCount = 1;
+    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(4);
+    const vk::Extent2D noiseImageExtent = { properties.extent.width * 2, properties.extent.height * 2 };
+    noiseImage = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, vk::Format::eR32G32B32A32Sfloat,
+        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+        vk::ImageAspectFlagBits::eColor);
+    noiseDepthImage = context.makeDepthImage(noiseImageExtent, noiseSampleCount);
+    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImage.format, noiseImageExtent, noiseSampleCount);
+
+    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImage.format, depthImage.format, 1);
+
+    noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
+        { vk::DescriptorType::eUniformBuffer },
+        { vk::ShaderStageFlagBits::eAll });
+
+    noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
+    noisePipeline = context.makePipeline(*noisePipelineLayout, noiseImageExtent, *noiseRenderPass, 0, noiseSampleCount,
+        "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
+        vk::PrimitiveTopology::eTriangleFan, false, {}, {});
+
+    noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
+
+    for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
+        noiseFramebuffers.push_back(context.makeFramebuffer(*noiseImage.view, *noiseDepthImage.view,
+            *noiseMultiSampleImage.view, *noiseRenderPass, noiseImageExtent));
+    }
 }
 
 VulkanApplication::VulkanApplication()
@@ -127,14 +142,8 @@ VulkanApplication::VulkanApplication()
     // figure out swapchain properties
     , m_swapchainProps(m_context.selectSwapchainProperties())
 
-    // make description set layout, pool, and sets
-    // TODO: make separate descriptionsetlayout for noise rendering
-    , m_descriptorSetLayout(m_context.makeDescriptorSetLayout())
-    , m_descriptorPool(m_context.makeDescriptorPool(m_swapchainProps.imageCount + 1))
-    , m_descriptorSets(m_context.makeDescriptorSets(*m_descriptorPool, *m_descriptorSetLayout, m_swapchainProps.imageCount + 1))
-
     // make swapchain
-    , m_swapchain(m_context, *m_descriptorSetLayout, m_swapchainProps)
+    , m_swapchain(m_context, m_swapchainProps)
 
     // make semaphores for synchronizing frame drawing operations
     , m_imageAvailableSemaphores(m_context.makeSemaphores(maxFramesInFlight))
@@ -148,15 +157,15 @@ VulkanApplication::VulkanApplication()
     // make sampler
     , m_sampler(m_context.makeTextureSampler(false))
 
-    , m_parallelCount(45)
-    , m_meridianCount(90)
+    , m_parallelCount(200)
+    , m_meridianCount(200)
     , m_renderHeightmap(true)
 {
     // make uniform buffers
     for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
         m_uniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
     }
-    m_noiseUniformBuffer = m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject));
+    m_mapBoundsUniformBuffer = m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject));
 
     // record draw commands
     recordDrawCommands();
@@ -169,7 +178,7 @@ void VulkanApplication::refreshSwapchain()
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
-    m_swapchain = SwapchainObject(m_context, *m_descriptorSetLayout, m_swapchainProps, *m_swapchain.swapchain);
+    m_swapchain = SwapchainObject(m_context, m_swapchainProps, *m_swapchain.swapchain);
 
     // re-record draw commands
     recordDrawCommands();
@@ -191,118 +200,262 @@ void VulkanApplication::recordDrawCommands()
 
     // record offscreen rendering
     {
-        vk::CommandBufferBeginInfo beginInfo{};
-        beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
-        beginInfo.pInheritanceInfo = nullptr;
+        std::size_t index = 0;
+        for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.noiseCommandBuffers) {
+            vk::CommandBufferBeginInfo beginInfo{};
+            beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
+            beginInfo.pInheritanceInfo = nullptr;
 
-        m_swapchain.noiseCommandBuffer->begin(beginInfo);
+            commandBuffer->begin(beginInfo);
 
-        // bind uniform descriptor sets
-        vk::DescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = *m_noiseUniformBuffer.buffer;
-        bufferInfo.offset = 0;
-        bufferInfo.range = VK_WHOLE_SIZE;
+            // bind uniform descriptor sets
+            std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
 
-        std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
-        descriptorWrites[0].dstSet = m_descriptorSets.back();
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &bufferInfo;
+            vk::DescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = *m_mapBoundsUniformBuffer.buffer;
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
 
-        m_context.device().updateDescriptorSets(descriptorWrites, {});
+            descriptorWrites[0].dstSet = m_swapchain.noiseDescriptorSet.sets[index];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        vk::RenderPassBeginInfo noiseRenderPassInfo{};
-        noiseRenderPassInfo.renderPass = *m_swapchain.noiseRenderPass;
-        noiseRenderPassInfo.framebuffer = *m_swapchain.noiseFramebuffer;
-        noiseRenderPassInfo.renderArea.offset.x = 0;
-        noiseRenderPassInfo.renderArea.offset.y = 0;
-        noiseRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
-        noiseRenderPassInfo.clearValueCount = clearValues.size();
-        noiseRenderPassInfo.pClearValues = clearValues.data();
+            m_context.device().updateDescriptorSets(descriptorWrites, {});
 
-        m_swapchain.noiseCommandBuffer->beginRenderPass(noiseRenderPassInfo, vk::SubpassContents::eInline);
-        {
-            m_swapchain.noiseCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
-                { m_descriptorSets.back() }, {});
+            vk::RenderPassBeginInfo noiseRenderPassInfo{};
+            noiseRenderPassInfo.renderPass = *m_swapchain.noiseRenderPass;
+            noiseRenderPassInfo.framebuffer = *m_swapchain.noiseFramebuffers[index];
+            noiseRenderPassInfo.renderArea.offset.x = 0;
+            noiseRenderPassInfo.renderArea.offset.y = 0;
+            noiseRenderPassInfo.renderArea.extent = m_swapchain.noiseImage.extent;
+            noiseRenderPassInfo.clearValueCount = clearValues.size();
+            noiseRenderPassInfo.pClearValues = clearValues.data();
 
-            m_swapchain.noiseCommandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipeline);
-            m_swapchain.noiseCommandBuffer->draw(4, 1, 0, 0);
+            commandBuffer->beginRenderPass(noiseRenderPassInfo, vk::SubpassContents::eInline);
+            {
+                commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipelineLayout, 0,
+                    { m_swapchain.noiseDescriptorSet.sets[index] }, {});
+
+                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipeline);
+                commandBuffer->draw(4, 1, 0, 0);
+            }
+            commandBuffer->endRenderPass();
+
+            commandBuffer->end();
+
+            index++;
         }
-        m_swapchain.noiseCommandBuffer->endRenderPass();
-
-        m_swapchain.noiseCommandBuffer->end();
     }
 
     // record main rendering
-    std::size_t index = 0;
-    for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
+    {
+        std::size_t index = 0;
+        for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
 
-        // bind uniform descriptor sets
-        vk::DescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = *m_uniformBuffers[index].buffer;
-        bufferInfo.offset = 0;
-        bufferInfo.range = VK_WHOLE_SIZE;
+            // bind uniform descriptor sets
+            std::array<vk::WriteDescriptorSet, 3> descriptorWrites{};
 
-        std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
-        descriptorWrites[0].dstSet = m_descriptorSets[index];
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &bufferInfo;
+            vk::DescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = *m_uniformBuffers[index].buffer;
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
 
-        vk::DescriptorImageInfo imageInfo{};
-        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        imageInfo.imageView = *m_swapchain.noiseImage.view;
-        imageInfo.sampler = *m_sampler;
+            descriptorWrites[0].dstSet = m_swapchain.descriptorSet.sets[index];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        descriptorWrites[1].dstSet = m_descriptorSets[index];
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pImageInfo = &imageInfo;
+            vk::DescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            imageInfo.imageView = *m_swapchain.noiseImage.view;
+            imageInfo.sampler = *m_sampler;
 
-        m_context.device().updateDescriptorSets(descriptorWrites, {});
+            descriptorWrites[1].dstSet = m_swapchain.descriptorSet.sets[index];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &imageInfo;
 
-        // begin recording
-        vk::CommandBufferBeginInfo beginInfo{};
-        beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
-        beginInfo.pInheritanceInfo = nullptr;
+            vk::DescriptorBufferInfo mapBoundsUniformBufferInfo{};
+            mapBoundsUniformBufferInfo.buffer = *m_mapBoundsUniformBuffer.buffer;
+            mapBoundsUniformBufferInfo.offset = 0;
+            mapBoundsUniformBufferInfo.range = VK_WHOLE_SIZE;
 
-        commandBuffer->begin(beginInfo);
+            descriptorWrites[2].dstSet = m_swapchain.descriptorSet.sets[index];
+            descriptorWrites[2].dstBinding = 2;
+            descriptorWrites[2].dstArrayElement = 0;
+            descriptorWrites[2].descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pBufferInfo = &mapBoundsUniformBufferInfo;
 
-        vk::RenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.renderPass = *m_swapchain.renderPass;
-        renderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
-        renderPassInfo.renderArea.offset.x = 0;
-        renderPassInfo.renderArea.offset.y = 0;
-        renderPassInfo.renderArea.extent = m_swapchainProps.extent;
-        renderPassInfo.clearValueCount = clearValues.size();
-        renderPassInfo.pClearValues = clearValues.data();
+            m_context.device().updateDescriptorSets(descriptorWrites, {});
 
-        commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-        {
-            commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
-                { m_descriptorSets[index] }, {});
+            // begin recording
+            vk::CommandBufferBeginInfo beginInfo{};
+            beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
+            beginInfo.pInheritanceInfo = nullptr;
 
-            commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
-            auto vertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
-            commandBuffer->draw(vertexCount, 1, 0, 0);
+            commandBuffer->begin(beginInfo);
 
-            commandBuffer->nextSubpass(vk::SubpassContents::eInline);
+            vk::RenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.renderPass = *m_swapchain.renderPass;
+            renderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
+            renderPassInfo.renderArea.offset.x = 0;
+            renderPassInfo.renderArea.offset.y = 0;
+            renderPassInfo.renderArea.extent = m_swapchainProps.extent;
+            renderPassInfo.clearValueCount = clearValues.size();
+            renderPassInfo.pClearValues = clearValues.data();
 
-            commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
-            commandBuffer->draw(vertexCount, 1, 0, 0);
+            commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+            {
+                commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
+                    { m_swapchain.descriptorSet.sets[index] }, {});
+
+                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
+                auto vertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
+                commandBuffer->draw(vertexCount, 1, 0, 0);
+
+                commandBuffer->nextSubpass(vk::SubpassContents::eInline);
+
+                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
+                commandBuffer->draw(vertexCount, 1, 0, 0);
+            }
+            commandBuffer->endRenderPass();
+
+            commandBuffer->end();
+
+            index++;
         }
-        commandBuffer->endRenderPass();
-
-        commandBuffer->end();
-
-        index++;
     }
+}
+
+void VulkanApplication::drawFrame()
+{
+    // The drawFrame function will perform the following operations:
+    // 1. Acquire an image from the swap chain
+    // 2. Execute the command buffer with that image as attachment in the framebuffer
+    // 3. Return the image to the swap chain for presentation
+
+    const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
+
+    vk::Fence inFlightFence = *m_inFlightFences[m_currentFrame];
+    m_context.device().waitForFences({ inFlightFence }, VK_TRUE, timeOut);
+
+    // acquire next image to write into from the swap chain
+    // note: this function is asynchronous
+    std::uint32_t imageIndex = m_context.device()
+                                   .acquireNextImageKHR(*m_swapchain.swapchain, timeOut, *m_imageAvailableSemaphores[m_currentFrame], nullptr)
+                                   .value;
+
+    // update the uniform data
+    {
+        // render pass
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.4f, 0.0f, 0.8f)));
+        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
+
+        ubo.eyePos = glm::vec4(m_eyePosition, 0);
+        ubo.view = glm::lookAt(m_eyePosition, m_eyePosition + m_lookDirection, m_upDirection);
+
+        ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
+        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
+
+        ubo.proj = glm::perspective(glm::radians(45.0f),
+            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
+        ubo.proj[1][1] *= -1; // invert Y axis
+
+        ubo.parallelCount = m_parallelCount;
+        ubo.meridianCount = m_meridianCount;
+
+        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
+
+        void* memPtr = m_context.device().mapMemory(*m_uniformBuffers[imageIndex].memory, 0, sizeof(ubo));
+        std::memcpy(memPtr, &ubo, sizeof(ubo));
+        m_context.device().unmapMemory(*m_uniformBuffers[imageIndex].memory);
+
+        // determine map bounds
+        float newMapSpan = std::acos(1 / length(ubo.modelEyePos));
+        if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2 || newMapSpan > m_currentMapBounds.mapSpanTheta) {
+            glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
+            m_currentMapBounds.mapCenterTheta = std::acos(normEye.z);
+            m_currentMapBounds.mapCenterPhi = std::atan2(normEye.y, normEye.x);
+            if (newMapSpan < m_currentMapBounds.mapSpanTheta / 2)
+                m_currentMapBounds.mapSpanTheta /= 2;
+            else {
+                m_currentMapBounds.mapSpanTheta *= 2;
+            }
+            m_renderHeightmap = true;
+            std::cout << "update map span to " << m_currentMapBounds.mapSpanTheta / glm::pi<float>() << "pi" << std::endl;
+        }
+
+        // TODO: make sure mapBoundsUniformBuffer doesn't get written during rendering
+        memPtr = m_context.device().mapMemory(*m_mapBoundsUniformBuffer.memory, 0, sizeof(m_currentMapBounds));
+        std::memcpy(memPtr, &m_currentMapBounds, sizeof(m_currentMapBounds));
+        m_context.device().unmapMemory(*m_mapBoundsUniformBuffer.memory);
+    }
+    vk::SubmitInfo submitInfo{};
+
+    std::vector<vk::Semaphore> mainRenderpassWaitFor = { *m_imageAvailableSemaphores[m_currentFrame] };
+    std::vector<vk::PipelineStageFlags> mainRenderpassWaitStage = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+
+    // submit offscreen pass
+    if (m_renderHeightmap) {
+        submitInfo.waitSemaphoreCount = 0;
+
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &*m_offscreenPassSemaphore;
+
+        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffers[0];
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+
+        m_context.graphicsQueue().submit({ submitInfo }, nullptr);
+
+        mainRenderpassWaitFor.push_back(*m_offscreenPassSemaphore);
+        mainRenderpassWaitStage.push_back(vk::PipelineStageFlagBits::eTessellationEvaluationShader);
+
+        m_renderHeightmap = false;
+    }
+
+    // execute the command buffer
+    submitInfo.waitSemaphoreCount = static_cast<std::uint32_t>(mainRenderpassWaitFor.size());
+    submitInfo.pWaitSemaphores = mainRenderpassWaitFor.data();
+    submitInfo.pWaitDstStageMask = mainRenderpassWaitStage.data();
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &*m_swapchain.commandBuffers[imageIndex];
+
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &*m_renderFinishedSemaphores[m_currentFrame];
+
+    m_context.device().resetFences({ inFlightFence });
+    m_context.graphicsQueue().submit({ submitInfo }, inFlightFence);
+
+    // write back to the swap chain
+    vk::PresentInfoKHR presentInfo{};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &*m_renderFinishedSemaphores[m_currentFrame];
+
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &*m_swapchain.swapchain;
+    presentInfo.pImageIndices = &imageIndex;
+
+    presentInfo.pResults = nullptr;
+
+    vk::Result result = m_context.presentQueue().presentKHR(&presentInfo);
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
+        refreshSwapchain();
+    } else if (result != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to present swapchain image");
+    }
+
+    m_currentFrame = (m_currentFrame + 1) % maxFramesInFlight;
 }
 
 void VulkanApplication::run()
@@ -314,6 +467,9 @@ void VulkanApplication::run()
     m_lookDirection = glm::vec3(0.0f, -1.0f, 0.0f);
     m_upDirection = glm::vec3(0.0f, 0.0f, 1.0f);
     m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
+    m_currentMapBounds.mapCenterTheta = glm::radians(45.0f);
+    m_currentMapBounds.mapCenterPhi = 0;
+    m_currentMapBounds.mapSpanTheta = glm::radians(180.0f);
 
     glfwSetWindowUserPointer(m_context.window(), this);
     glfwSetKeyCallback(m_context.window(), [](GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -376,22 +532,24 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    m_planetRotateAngle += dt / 32.0f * glm::radians(90.0f);
+    m_planetRotateAngle += dt / 128.0f * glm::radians(90.0f);
 
     const float sensitivity = 0.005f;
     glm::vec3 right = glm::cross(m_lookDirection, m_upDirection);
-    glm::mat4 rotate0 = glm::rotate(glm::mat4(1.0f), m_deltaCursorPos.x * sensitivity, m_upDirection);
-    glm::mat4 rotate1 = glm::rotate(glm::mat4(1.0f), m_deltaCursorPos.y * sensitivity, right);
+    glm::mat4 rotate0 = glm::rotate(glm::mat4(1.0f), -m_deltaCursorPos.x * sensitivity, m_upDirection);
+    glm::mat4 rotate1 = glm::rotate(glm::mat4(1.0f), -m_deltaCursorPos.y * sensitivity, right);
     m_lookDirection = rotate0 * rotate1 * glm::vec4(m_lookDirection, 1.0f);
     m_upDirection = rotate1 * glm::vec4(m_upDirection, 1.0f);
 
-    float distance = glm::distance(m_eyePosition, glm::vec3(0));
-    float speed = (distance - 1.0f);
+    float distance = glm::distance(m_eyePosition, glm::vec3(0)) - 1.0f;
+    float speed = distance + 0.1f;
     if (m_movingForward) {
-        m_eyePosition += m_lookDirection * speed * dt;
+        glm::vec3 velocity = m_lookDirection * speed * dt;
+        velocity -= glm::proj(velocity, m_eyePosition) * glm::clamp(1.0f - 5.0f * distance, 0.0f, 1.0f);
+        m_eyePosition += velocity;
     }
     if (m_movingBackward) {
-        m_eyePosition -= m_lookDirection * speed * dt;
+        m_eyePosition -= m_lookDirection * dt;
     }
     if (m_rotatingLeft) {
         glm::mat4 rotate = glm::rotate(glm::mat4(1.0f), -dt * 1.5f, m_lookDirection);
@@ -404,122 +562,6 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
 
     m_lastCursorPos += m_deltaCursorPos;
     m_deltaCursorPos = glm::vec2(0);
-}
-
-void VulkanApplication::drawFrame()
-{
-    // The drawFrame function will perform the following operations:
-    // 1. Acquire an image from the swap chain
-    // 2. Execute the command buffer with that image as attachment in the framebuffer
-    // 3. Return the image to the swap chain for presentation
-
-    const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
-
-    vk::Fence inFlightFence = *m_inFlightFences[m_currentFrame];
-    m_context.device().waitForFences({ inFlightFence }, VK_TRUE, timeOut);
-
-    // acquire next image to write into from the swap chain
-    // note: this function is asynchronous
-    std::uint32_t imageIndex = m_context.device()
-                                   .acquireNextImageKHR(*m_swapchain.swapchain, timeOut, *m_imageAvailableSemaphores[m_currentFrame], nullptr)
-                                   .value;
-
-    // update the uniform data
-    {
-        MapBoundsObject mapBounds;
-        void* const data = m_context.device().mapMemory(*m_noiseUniformBuffer.memory, 0, sizeof(mapBounds));
-        std::memcpy(data, &mapBounds, sizeof(mapBounds));
-        m_context.device().unmapMemory(*m_noiseUniformBuffer.memory);
-    }
-    vk::SubmitInfo submitInfo{};
-
-    vk::Semaphore mainRenderpassWaitFor = *m_imageAvailableSemaphores[m_currentFrame];
-    vk::PipelineStageFlags mainRenderpassWaitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-
-    // submit offscreen pass
-    if (m_renderHeightmap) {
-        std::array<vk::PipelineStageFlags, 1> noiseWaitStages = {
-            { vk::PipelineStageFlagBits::eColorAttachmentOutput }
-        };
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &*m_imageAvailableSemaphores[m_currentFrame];
-        submitInfo.pWaitDstStageMask = noiseWaitStages.data();
-
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &*m_offscreenPassSemaphore;
-
-        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffer;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &offscreenCommandBuffer;
-
-        m_context.graphicsQueue().submit({ submitInfo }, nullptr);
-
-        mainRenderpassWaitFor = *m_offscreenPassSemaphore;
-        mainRenderpassWaitStage = vk::PipelineStageFlagBits::eTessellationEvaluationShader;
-
-        m_renderHeightmap = false;
-    }
-
-    // update the uniform data
-    {
-        UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.4f, 0.0f, 0.8f)));
-        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
-
-        ubo.eyePos = glm::vec4(m_eyePosition, 0);
-        ubo.view = glm::lookAt(m_eyePosition, m_eyePosition + m_lookDirection, m_upDirection);
-
-        ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
-        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
-
-        ubo.proj = glm::perspective(glm::radians(45.0f),
-            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
-        ubo.proj[1][1] *= -1; // invert Y axis
-
-        ubo.parallelCount = m_parallelCount;
-        ubo.meridianCount = m_meridianCount;
-
-        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
-
-        // update uniform buffer
-        void* const data = m_context.device().mapMemory(*m_uniformBuffers[imageIndex].memory, 0, sizeof(ubo));
-        std::memcpy(data, &ubo, sizeof(ubo));
-        m_context.device().unmapMemory(*m_uniformBuffers[imageIndex].memory);
-    }
-
-    // execute the command buffer
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &mainRenderpassWaitFor;
-    submitInfo.pWaitDstStageMask = &mainRenderpassWaitStage;
-
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &*m_swapchain.commandBuffers[imageIndex];
-
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &*m_renderFinishedSemaphores[m_currentFrame];
-
-    m_context.device().resetFences({ inFlightFence });
-    m_context.graphicsQueue().submit({ submitInfo }, inFlightFence);
-
-    // write back to the swap chain
-    vk::PresentInfoKHR presentInfo{};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &*m_renderFinishedSemaphores[m_currentFrame];
-
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &*m_swapchain.swapchain;
-    presentInfo.pImageIndices = &imageIndex;
-
-    presentInfo.pResults = nullptr;
-
-    vk::Result result = m_context.presentQueue().presentKHR(&presentInfo);
-    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
-        refreshSwapchain();
-    } else if (result != vk::Result::eSuccess) {
-        throw std::runtime_error("failed to present swapchain image");
-    }
-
-    m_currentFrame = (m_currentFrame + 1) % maxFramesInFlight;
 }
 
 void VulkanApplication::keyEvent(int key, int, int action, int)

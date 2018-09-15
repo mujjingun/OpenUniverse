@@ -17,27 +17,35 @@ struct SwapchainObject {
 
     ImageObject multiSampleImage;
     ImageObject depthImage;
-    ImageObject noiseImage;
-    ImageObject noiseDepthImage;
-    ImageObject noiseMultiSampleImage;
 
     vk::UniqueRenderPass renderPass;
-    vk::UniqueRenderPass noiseRenderPass;
+
+    DescriptorSetObject descriptorSet;
 
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline terrainPipeline;
     vk::UniquePipeline atmospherePipeline;
-    vk::UniquePipeline noisePipeline;
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
-    vk::UniqueCommandBuffer noiseCommandBuffer;
 
     std::vector<vk::UniqueFramebuffer> framebuffers{};
-    vk::UniqueFramebuffer noiseFramebuffer;
+
+    // noise render pass
+    ImageObject noiseImage;
+    ImageObject noiseDepthImage;
+    ImageObject noiseMultiSampleImage;
+
+    vk::UniqueRenderPass noiseRenderPass;
+
+    DescriptorSetObject noiseDescriptorSet;
+    vk::UniquePipelineLayout noisePipelineLayout;
+    vk::UniquePipeline noisePipeline;
+
+    std::vector<vk::UniqueCommandBuffer> noiseCommandBuffers{};
+    std::vector<vk::UniqueFramebuffer> noiseFramebuffers{};
 
     SwapchainObject() = default;
-    SwapchainObject(GraphicsContext const& context, vk::DescriptorSetLayout descriptorSetLayout,
-                    SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain = nullptr);
+    SwapchainObject(GraphicsContext const& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain = nullptr);
 };
 
 struct Vertex;
@@ -49,6 +57,12 @@ struct ModelObject {
 
     ModelObject() = default;
     ModelObject(GraphicsContext const& context, std::vector<Vertex> const& vertices, std::vector<std::uint16_t> const& indices);
+};
+
+struct MapBoundsObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
 };
 
 class VulkanApplication {
@@ -70,10 +84,6 @@ private:
     GraphicsContext m_context;
     SwapchainProperties m_swapchainProps;
 
-    vk::UniqueDescriptorSetLayout m_descriptorSetLayout;
-    vk::UniqueDescriptorPool m_descriptorPool;
-    std::vector<vk::DescriptorSet> m_descriptorSets;
-
     SwapchainObject m_swapchain;
 
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
@@ -85,7 +95,7 @@ private:
     vk::UniqueSampler m_sampler;
 
     std::vector<BufferObject> m_uniformBuffers{};
-    BufferObject m_noiseUniformBuffer;
+    BufferObject m_mapBoundsUniformBuffer;
 
     std::size_t m_currentFrame = 0;
 
@@ -108,8 +118,12 @@ private:
     glm::vec3 m_upDirection;
     bool m_movingForward, m_movingBackward, m_rotatingLeft, m_rotatingRight;
 
+    // control related stuff
     glm::vec2 m_lastCursorPos;
     glm::vec2 m_deltaCursorPos;
+
+    // map related stuff
+    MapBoundsObject m_currentMapBounds;
 };
 
 } // namespace ou

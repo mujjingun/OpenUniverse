@@ -14,6 +14,7 @@
 
 namespace ou {
 
+// TODO: separate glfw utils from vulkan utils
 using UniqueWindow = std::unique_ptr<GLFWwindow, void (*)(GLFWwindow*)>;
 UniqueWindow makeWindow(int width, int height, bool fullscreen);
 
@@ -50,11 +51,19 @@ struct ImageObject {
     vk::UniqueDeviceMemory memory;
     vk::UniqueImageView view;
     vk::Format format;
+    vk::Extent2D extent;
+    std::uint32_t mipLevels;
 };
 
 struct BufferObject {
     vk::UniqueBuffer buffer;
     vk::UniqueDeviceMemory memory;
+};
+
+struct DescriptorSetObject {
+    vk::UniqueDescriptorSetLayout layout;
+    vk::UniqueDescriptorPool pool;
+    std::vector<vk::DescriptorSet> sets;
 };
 
 class GraphicsContext {
@@ -76,10 +85,14 @@ public:
 
     SwapchainProperties selectSwapchainProperties() const;
 
-    vk::UniqueDescriptorSetLayout makeDescriptorSetLayout() const;
-    vk::UniqueDescriptorPool makeDescriptorPool(std::uint32_t size) const;
+    vk::UniqueDescriptorSetLayout makeDescriptorSetLayout(const std::vector<vk::DescriptorType>& types,
+        const std::vector<vk::ShaderStageFlags> &stages) const;
+    vk::UniqueDescriptorPool makeDescriptorPool(uint32_t size, std::vector<vk::DescriptorType> const& types) const;
     std::vector<vk::DescriptorSet> makeDescriptorSets(vk::DescriptorPool pool,
         vk::DescriptorSetLayout layout, std::uint32_t size) const;
+
+    DescriptorSetObject makeDescriptorSet(uint32_t size, std::vector<vk::DescriptorType> const& types,
+        std::vector<vk::ShaderStageFlags> const& stages) const;
 
     vk::UniqueSwapchainKHR makeSwapchain(SwapchainProperties props, vk::SwapchainKHR oldSwapchain = nullptr) const;
     std::vector<vk::Image> retrieveSwapchainImages(vk::SwapchainKHR swapchain) const;
@@ -126,6 +139,9 @@ public:
     BufferObject constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData, std::size_t bufferSize) const;
 
     BufferObject makeHostVisibleBuffer(vk::BufferUsageFlags usageFlags, std::size_t bufferSize) const;
+
+    void generateMipmaps(vk::Image image, vk::Format format, vk::Extent2D extent, std::uint32_t mipLevels) const;
+    void generateMipmaps(vk::CommandBuffer commandBuffer, vk::Image image, vk::Format format, vk::Extent2D extent, std::uint32_t mipLevels) const;
 
     ImageObject makeTextureImage(const char* filename) const;
 

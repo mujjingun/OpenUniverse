@@ -2,11 +2,10 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
-layout(set = 0, binding = 0) uniform UniformBufferObject {
-    mat4 model;
-    mat4 view;
-    mat4 proj;
-    vec3 eyePos;
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
 } ubo;
 
 layout(location = 0) out vec2 outPos;

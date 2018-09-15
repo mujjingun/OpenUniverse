@@ -17,6 +17,12 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
 
 layout(binding = 1) uniform sampler2D texSampler;
 
+layout(set = 0, binding = 2, std140) uniform MapBoundsObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
+} bounds;
+
 layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;
@@ -34,21 +40,45 @@ vec3 interpolate3D(vec3 v0, vec3 v1, vec3 v2, vec3 v3)
     return mix(p0, p1, gl_TessCoord.y);
 }
 
-const float pi = 3.1415926536;
+const float pi = acos(-1);
+
+mat3 rotationMatrix(vec3 axis, float angle)
+{
+    float s = sin(angle);
+    float c = cos(angle);
+    float oc = 1.0 - c;
+
+    return mat3(oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
+                oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
+                oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c        );
+}
+
+vec2 getTexCoords(vec3 pos) {
+    vec3 mapCenterCart = vec3(sin(bounds.mapCenterTheta) * cos(bounds.mapCenterPhi),
+                              sin(bounds.mapCenterTheta) * sin(bounds.mapCenterPhi),
+                              cos(bounds.mapCenterTheta));
+    mat3 rotate = rotationMatrix(normalize(cross(vec3(1, 0, 0), mapCenterCart)), acos(mapCenterCart.x));
+
+    // (theta, phi) in [0, pi] x [-pi, pi]
+    vec3 mapCoords = rotate * pos;
+    vec2 sphericalCoords = vec2(acos(mapCoords.z), atan(mapCoords.y, mapCoords.x));
+    sphericalCoords.x = (sphericalCoords.x - pi / 2) / bounds.mapSpanTheta / 2 + .5f;
+    sphericalCoords.y = sphericalCoords.y / bounds.mapSpanTheta / 2 + .5f;
+    vec2 texCoords = vec2(sphericalCoords.x, sphericalCoords.y);
+    return texCoords;
+}
 
 // The PG subdivided an equilateral triangle into
 // smaller triangles and executes the TES for every generated vertex.
 void main(void)
 {
     const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
+    vec2 texCoords = getTexCoords(pos);
 
-    // (theta, phi) in [0, pi] x [-pi, pi]
-    vec2 sphericalCoords = vec2(acos(pos.z), atan(pos.y, pos.x));
-    vec2 texCoords = vec2(sphericalCoords.x / pi, sphericalCoords.y / pi / 2 + .5);
-
+    vec4 noiseTex = texture(texSampler, texCoords);
     const float noise = max(0, texture(texSampler, texCoords).x);
 
-    vec3 modelPos = pos * (1.0f + vec3(noise * 0.015f));
+    vec3 modelPos = pos * (1.0f + vec3(noise * 0.01f));
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;

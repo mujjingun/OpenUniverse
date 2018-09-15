@@ -323,6 +323,7 @@ vk::UniqueDevice ou::makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDe
     deviceFeatures.samplerAnisotropy = VK_TRUE;
     deviceFeatures.tessellationShader = VK_TRUE;
     deviceFeatures.shaderTessellationAndGeometryPointSize = VK_TRUE;
+    deviceFeatures.shaderFloat64 = VK_TRUE;
 
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredDeviceExtensions.size());
@@ -412,7 +413,7 @@ int ou::GraphicsContext::refreshRate() const
 vk::Extent2D ou::GraphicsContext::screenResolution() const
 {
     return { static_cast<std::uint32_t>(m_videoMode->width),
-                static_cast<std::uint32_t>(m_videoMode->height) };
+        static_cast<std::uint32_t>(m_videoMode->height) };
 }
 
 void ou::GraphicsContext::toggleFullscreenMode() const
@@ -423,8 +424,7 @@ void ou::GraphicsContext::toggleFullscreenMode() const
         // enable fullscreen mode
         glfwSetWindowMonitor(m_window.get(), glfwGetPrimaryMonitor(), 0, 0,
             static_cast<int>(screenResolution().width), static_cast<int>(screenResolution().height), refreshRate());
-    }
-    else {
+    } else {
         // disable fullscreen mode
         glfwSetWindowMonitor(m_window.get(), nullptr, 0, 0,
             static_cast<int>(m_windowedModeSize.width), static_cast<int>(m_windowedModeSize.height), refreshRate());
@@ -514,43 +514,37 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
     return properties;
 }
 
-vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout() const
+vk::UniqueDescriptorSetLayout ou::GraphicsContext::makeDescriptorSetLayout(std::vector<vk::DescriptorType> const& types,
+    std::vector<vk::ShaderStageFlags> const& stages) const
 {
-    std::array<vk::DescriptorSetLayoutBinding, 2> layoutBindings{};
+    assert(types.size() == stages.size());
+    std::vector<vk::DescriptorSetLayoutBinding> layoutBindings(types.size());
 
-    layoutBindings[0].binding = 0;
-    layoutBindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-    layoutBindings[0].descriptorCount = 1;
-    layoutBindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex
-        | vk::ShaderStageFlagBits::eTessellationControl
-        | vk::ShaderStageFlagBits::eTessellationEvaluation
-        | vk::ShaderStageFlagBits::eFragment;
-    layoutBindings[0].pImmutableSamplers = nullptr;
-
-    layoutBindings[1].binding = 1;
-    layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].stageFlags = vk::ShaderStageFlagBits::eTessellationEvaluation
-        | vk::ShaderStageFlagBits::eFragment;
+    for (std::size_t index = 0; index < layoutBindings.size(); ++index) {
+        layoutBindings[index].binding = static_cast<std::uint32_t>(index);
+        layoutBindings[index].descriptorType = types[index];
+        layoutBindings[index].descriptorCount = 1;
+        layoutBindings[index].stageFlags = stages[index];
+        layoutBindings[index].pImmutableSamplers = nullptr;
+    }
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.bindingCount = layoutBindings.size();
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(layoutBindings.size());
     layoutInfo.pBindings = layoutBindings.data();
 
     return m_device->createDescriptorSetLayoutUnique(layoutInfo);
 }
 
-vk::UniqueDescriptorPool ou::GraphicsContext::makeDescriptorPool(uint32_t size) const
+vk::UniqueDescriptorPool ou::GraphicsContext::makeDescriptorPool(uint32_t size, std::vector<vk::DescriptorType> const& types) const
 {
-    std::array<vk::DescriptorPoolSize, 2> poolSizes{};
-    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = size;
-    poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = size;
+    std::vector<vk::DescriptorPoolSize> poolSizes(types.size());
+    for (std::size_t index = 0; index < types.size(); ++index) {
+        poolSizes[index].type = types[index];
+        poolSizes[index].descriptorCount = size;
+    }
 
     vk::DescriptorPoolCreateInfo poolInfo{};
-    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = size;
 
@@ -567,6 +561,17 @@ std::vector<vk::DescriptorSet> ou::GraphicsContext::makeDescriptorSets(vk::Descr
     allocInfo.pSetLayouts = layouts.data();
 
     return m_device->allocateDescriptorSets(allocInfo);
+}
+
+ou::DescriptorSetObject ou::GraphicsContext::makeDescriptorSet(uint32_t size, std::vector<vk::DescriptorType> const& types,
+    const std::vector<vk::ShaderStageFlags> &stages) const
+{
+    DescriptorSetObject set;
+    set.layout = makeDescriptorSetLayout(types, stages);
+    set.pool = makeDescriptorPool(size, types);
+    set.sets = makeDescriptorSets(*set.pool, *set.layout, size);
+
+    return set;
 }
 
 vk::UniqueSwapchainKHR ou::GraphicsContext::makeSwapchain(ou::SwapchainProperties props, vk::SwapchainKHR oldSwapchain) const
@@ -692,7 +697,9 @@ ou::ImageObject ou::GraphicsContext::makeImage(vk::SampleCountFlagBits numSample
         std::move(image),
         std::move(imageMemory),
         std::move(imageView),
-        imageInfo.format
+        imageInfo.format,
+        extent,
+        mipLevels
     };
 }
 
@@ -1259,16 +1266,19 @@ ou::BufferObject ou::GraphicsContext::makeHostVisibleBuffer(vk::BufferUsageFlags
     return buf;
 }
 
-static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device, vk::CommandPool commandPool, vk::Queue queue,
-    vk::Image image, vk::Format format, vk::Extent2D extent, std::uint32_t mipLevels)
+void ou::GraphicsContext::generateMipmaps(vk::Image image, vk::Format format, vk::Extent2D extent, uint32_t mipLevels) const
+{
+    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(*m_device, *m_commandPool);
+    generateMipmaps(*commandBuffer, image, format, extent, mipLevels);
+}
+
+void ou::GraphicsContext::generateMipmaps(vk::CommandBuffer commandBuffer, vk::Image image, vk::Format format, vk::Extent2D extent, uint32_t mipLevels) const
 {
     // check if image format can generate linear filter mipmaps
-    vk::FormatProperties formatProperties = physicalDevice.getFormatProperties(format);
+    vk::FormatProperties formatProperties = m_physicalDevice.getFormatProperties(format);
     if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
         throw std::runtime_error("texture image format does not support linear blitting");
     }
-
-    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
 
     vk::ImageMemoryBarrier barrier{};
     barrier.image = image;
@@ -1287,7 +1297,7 @@ static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device
         barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
         barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
 
-        commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
             {}, {}, {}, { barrier });
 
         vk::ImageBlit blit{};
@@ -1316,7 +1326,7 @@ static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device
         blit.dstSubresource.baseArrayLayer = 0;
         blit.dstSubresource.layerCount = 1;
 
-        commandBuffer->blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
+        commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
             { blit }, vk::Filter::eLinear);
 
         barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
@@ -1324,7 +1334,7 @@ static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device
         barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
         barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-        commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
             {}, {}, {}, { barrier });
     }
 
@@ -1334,10 +1344,8 @@ static void generateMipmaps(vk::PhysicalDevice physicalDevice, vk::Device device
     barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
     barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-    commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
         {}, {}, {}, { barrier });
-
-    submitSingleTimeCommands(commandBuffer.get(), queue);
 }
 
 ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) const
@@ -1379,7 +1387,7 @@ ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) cons
         imageExtent.width, imageExtent.height, *m_device, *m_commandPool, m_graphicsQueue);
 
     // generate mipmaps
-    generateMipmaps(m_physicalDevice, *m_device, *m_commandPool, m_graphicsQueue, *texture.image, imageFormat, imageExtent, mipLevels);
+    generateMipmaps(*texture.image, imageFormat, imageExtent, mipLevels);
 
     return texture;
 }
@@ -1395,16 +1403,16 @@ vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoord
 
     samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
 
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToBorder;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToBorder;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToBorder;
+
     if (unnormalizedCoordinates) {
         samplerInfo.unnormalizedCoordinates = true;
 
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
         samplerInfo.minLod = 0.0f;
         samplerInfo.maxLod = 0.0f;
-
-        samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-        samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-        samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
 
         samplerInfo.anisotropyEnable = VK_FALSE;
         samplerInfo.maxAnisotropy = 16;
@@ -1414,10 +1422,6 @@ vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoord
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
         samplerInfo.minLod = 0.0f;
         samplerInfo.maxLod = 12.0f;
-
-        samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
-        samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
-        samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
 
         samplerInfo.anisotropyEnable = VK_TRUE;
         samplerInfo.maxAnisotropy = 16;

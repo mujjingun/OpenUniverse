@@ -110,21 +110,48 @@ float cnoise(vec3 P)
   return 2.2 * n_xyz;
 }
 
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
+} ubo;
+
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec2 inPos;
 
-const float pi = 3.1415926536;
+const float pi = acos(-1);
 
-void main() {
-    const vec2 spherical = vec2(inPos.x * pi, (inPos.y * 2 - 1) * pi); // (theta, phi) in [0, pi] x [-pi, pi]
-    const vec3 cartesian = vec3(sin(spherical.x) * cos(spherical.y), sin(spherical.x) * sin(spherical.y), cos(spherical.x));
+mat3 rotationMatrix(vec3 axis, float angle)
+{
+    float s = sin(angle);
+    float c = cos(angle);
+    float oc = 1.0 - c;
+
+    return mat3(oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
+                oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
+                oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c        );
+}
+
+void main() {    
+    vec3 mapCenterCart = vec3(sin(ubo.mapCenterTheta) * cos(ubo.mapCenterPhi),
+                              sin(ubo.mapCenterTheta) * sin(ubo.mapCenterPhi),
+                              cos(ubo.mapCenterTheta));
+    mat3 rotate = rotationMatrix(normalize(cross(vec3(1, 0, 0), mapCenterCart)), -acos(mapCenterCart.x));
+
+    const vec2 spherical = vec2(
+                (inPos.x * 2 - 1) * ubo.mapSpanTheta + pi / 2, // [pi/2 - span, pi/2 + span]
+                (inPos.y * 2 - 1) * ubo.mapSpanTheta); // [-span, span]
+    const vec3 cartesian = rotate * vec3(sin(spherical.x) * cos(spherical.y), sin(spherical.x) * sin(spherical.y), cos(spherical.x));
     const vec3 seed_1 = cartesian * 2;
     const float noise_1 = cnoise(seed_1)
             + cnoise(seed_1 * 2) / 2
             + cnoise(seed_1 * 8) / 4
             + cnoise(seed_1 * 16) / 6
-            + cnoise(seed_1 * 64) / 12;
+            + cnoise(seed_1 * 32) / 12
+            + cnoise(seed_1 * 64) / 15
+            + cnoise(seed_1 * 128) / 20
+            + cnoise(seed_1 * 256) / 25;
 
     const vec3 seed_2 = seed_1 * 2 + vec3(10.0f);
     const float noise_2 = smoothstep(-0.1, 1.0, cnoise(seed_2))

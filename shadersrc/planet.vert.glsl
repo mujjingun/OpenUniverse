@@ -15,6 +15,12 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
 
 layout(location = 0) out vec3 outPos;
 
+layout(set = 0, binding = 2, std140) uniform MapBoundsObject {
+    float mapCenterTheta;
+    float mapCenterPhi;
+    float mapSpanTheta;
+} bounds;
+
 mat3 rotationMatrix(vec3 axis, float angle)
 {
     float s = sin(angle);
@@ -26,14 +32,14 @@ mat3 rotationMatrix(vec3 axis, float angle)
                 oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c        );
 }
 
-const float pi = 3.1415926536;
+const float pi = acos(-1);
 
 void main() {
     // generate a sphere
 
     // int[meridianCount][parallelCount][4]
-    float meridianIndex = float(gl_VertexIndex / (4 * ubo.parallelCount));
-    float parallelIndex = float(gl_VertexIndex % (4 * ubo.parallelCount) / 4);
+    int meridianIndex = gl_VertexIndex / (4 * ubo.parallelCount);
+    int parallelIndex = gl_VertexIndex % (4 * ubo.parallelCount) / 4;
     int primitiveIndex = gl_VertexIndex % 4;
 
     if ((primitiveIndex == 1) || (primitiveIndex == 2))
@@ -41,13 +47,14 @@ void main() {
     if ((primitiveIndex == 2) || (primitiveIndex == 3))
         meridianIndex++;
 
-    vec3 modelEyePos = ubo.modelEyePos.xyz;
-    vec3 norm = normalize(modelEyePos);
-    mat3 rotate = rotationMatrix(normalize(cross(norm, vec3(0, 0, 1))), acos(norm.z));
+    vec3 norm = vec3(sin(bounds.mapCenterTheta) * cos(bounds.mapCenterPhi),
+                     sin(bounds.mapCenterTheta) * sin(bounds.mapCenterPhi),
+                     cos(bounds.mapCenterTheta));
+    mat3 rotate = rotationMatrix(normalize(cross(norm, vec3(1, 0, 0))), acos(norm.x));
 
-    float thetaEnd = acos(0.9f / length(modelEyePos));
-    float theta = parallelIndex / ubo.parallelCount * thetaEnd;
-    float phi = mix(0, 2 * pi, meridianIndex / ubo.meridianCount);
+    float thetaEnd = bounds.mapSpanTheta;
+    float theta = mix(pi / 2 - thetaEnd, pi / 2 + thetaEnd, float(parallelIndex) / ubo.parallelCount);
+    float phi = mix(-thetaEnd, +thetaEnd, float(meridianIndex) / ubo.meridianCount);
 
     outPos = rotate * vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
 }
