@@ -27,6 +27,7 @@ layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
 layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;
+layout (location = 1) out vec3 worldPos;
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -80,7 +81,7 @@ void main(void)
     const float noise = max(0, noiseTex.r);
 
     vec3 modelPos = pos * (1.0f + vec3(noise * 0.01f));
-    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+    worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;
 }

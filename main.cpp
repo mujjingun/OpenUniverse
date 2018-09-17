@@ -83,12 +83,13 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, depthImage.format, 2);
 
     // make descriptor sets
+    const std::size_t noiseFrameBuffersCount = 3;
     descriptorSet = context.makeDescriptorSet(properties.imageCount,
         { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eCombinedImageSampler },
         { vk::ShaderStageFlagBits::eAll,
             vk::ShaderStageFlagBits::eAll,
             vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
-        { 1, 1, 2 });
+        { 1, 1, noiseFrameBuffersCount });
 
     // make pipelines
     pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
@@ -110,7 +111,6 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     }
 
     // make offscreen render target
-    const std::size_t noiseFrameBuffersCount = 2;
     const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(2);
     const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
     const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
@@ -393,7 +393,7 @@ void VulkanApplication::drawFrame()
             m_context.device().resetFences({ *m_offscreenFence[nextOffscreenIndex] });
             m_lastRenderedIndex = nextOffscreenIndex;
             m_renderingHeightmap = false;
-            //std::cout << "finished. current index: " << m_lastRenderedIndex << std::endl;
+            std::cout << "finished. current index: " << m_lastRenderedIndex << std::endl;
         }
         ubo.readyNoiseImageIndex = static_cast<std::uint32_t>(m_lastRenderedIndex);
 
@@ -430,7 +430,7 @@ void VulkanApplication::drawFrame()
                 m_updateHeightmap = true;
                 m_mapBounds[nextOffscreenIndex] = newMapBounds;
 
-                //std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi..." << std::endl;
+                std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi..." << std::endl;
             }
 
             m_context.updateMemory(*m_mapBoundsUniformBuffers[nextOffscreenIndex].memory, &m_mapBounds[nextOffscreenIndex], sizeof(MapBoundsObject));
@@ -524,7 +524,6 @@ void VulkanApplication::run()
         if (!std::isfinite(app->m_lastCursorPos.x)) {
             app->m_lastCursorPos = glm::vec2{ xpos, ypos };
         }
-        app->m_lastCursorPos += app->m_deltaCursorPos;
         app->m_deltaCursorPos = glm::vec2{ xpos, ypos } - app->m_lastCursorPos;
     });
 
@@ -579,10 +578,16 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
 
     //m_planetRotateAngle += dt / 128.0f * glm::radians(90.0f);
 
+    const float r = 0.1f;
+    glm::vec2 smoothDelta{};
+    if (std::isfinite(m_lastCursorPos.x)) {
+        smoothDelta = r * m_deltaCursorPos;
+    }
+
     const float sensitivity = 0.005f;
     glm::vec3 right = glm::cross(m_lookDirection, m_upDirection);
-    glm::mat4 rotate0 = glm::rotate(glm::mat4(1.0f), -m_deltaCursorPos.x * sensitivity, m_upDirection);
-    glm::mat4 rotate1 = glm::rotate(glm::mat4(1.0f), -m_deltaCursorPos.y * sensitivity, right);
+    glm::mat4 rotate0 = glm::rotate(glm::mat4(1.0f), -smoothDelta.x * sensitivity, m_upDirection);
+    glm::mat4 rotate1 = glm::rotate(glm::mat4(1.0f), -smoothDelta.y * sensitivity, right);
     m_lookDirection = rotate0 * rotate1 * glm::vec4(m_lookDirection, 1.0f);
     m_upDirection = rotate1 * glm::vec4(m_upDirection, 1.0f);
 
@@ -590,7 +595,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     float speed = distance + 0.02f;
     if (m_movingForward) {
         glm::vec3 velocity = m_lookDirection * speed * dt;
-        velocity -= glm::proj(velocity, m_eyePosition) * glm::clamp(1.0f - 10.0f * distance, 0.0f, 1.0f);
+        velocity -= glm::proj(velocity, m_eyePosition) * glm::clamp(1.0f - 100.0f * distance, 0.0f, 1.0f);
         m_eyePosition += velocity;
     }
     if (m_movingBackward) {
@@ -605,8 +610,8 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
         m_upDirection = rotate * glm::vec4(m_upDirection, 0.0f);
     }
 
-    m_lastCursorPos += m_deltaCursorPos;
-    m_deltaCursorPos = glm::vec2(0);
+    m_lastCursorPos += smoothDelta;
+    m_deltaCursorPos -= smoothDelta;
 }
 
 void VulkanApplication::keyEvent(int key, int, int action, int)

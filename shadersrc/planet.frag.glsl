@@ -25,6 +25,7 @@ layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
 layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec3 worldPos;
 
 const float pi = acos(-1);
 
@@ -54,28 +55,37 @@ vec2 getTexCoords(vec3 pos) {
     return texCoords;
 }
 
+const float r = 0.01f;
+
 void main() {
     vec3 cartCoords = normalize(inPos);
     vec2 texCoords = getTexCoords(cartCoords);
 
     vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], texCoords);
     float noise = noiseTex.x;
-    float biome = noiseTex.z;
-    float temp = noiseTex.w;
+    vec3 grad = noiseTex.yzw;
+    float biome = 0.0f;
+    float temp = 30.0f;
+
+    vec2 sphere = vec2(acos(cartCoords.z), atan(cartCoords.y, cartCoords.x));
+    vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
+    vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
+    vec3 dndt = dgdt * (r * noise + 1) + cartCoords * dot(dgdt, grad) * r;
+    vec3 dndp = dgdp * (r * noise + 1) + cartCoords * dot(dgdp, grad) * r;
 
     vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
     vec3 sandColor = vec3(236, 221, 166) / 256.0f;
-    vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.0f, 0.01f, noise)) - vec3(noise) * .2f, 1.0);
+    vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.01f, 0.0101f, noise)), 1.0);
     vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.8f) * (1.0f - pow(abs(noise), 0.5) * .3f), 1.0f);
     float oceanOrTerrain = noise > 0? 1: 0;
     vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
     color = mix(vec4(1.0f), color, smoothstep(0.0f, 0.01f, temp));
 
-    vec3 modelPos = cartCoords * mix(1.0f, 1.0f + noise * 0.01f, oceanOrTerrain);
+    vec3 modelPos = cartCoords * mix(1.0f, 1.0f + noise * r, oceanOrTerrain);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
 
-    vec3 normal = -worldPos; //normalize(cross(dFdx(worldPos), dFdy(worldPos)));
+    vec3 normal = mix(-worldPos, normalize(-cross(dndt, dndp)), oceanOrTerrain);
     float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.1f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
@@ -86,5 +96,6 @@ void main() {
         light += specularFactor * mix(0.5f, 0.05f, oceanOrTerrain);
     }
     outColor = vec4(light * color.xyz, color.a);
+    //outColor = vec4(deriv * 10.0f, 0.0f, 1.0f);
 }
 

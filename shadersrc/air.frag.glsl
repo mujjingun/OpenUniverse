@@ -56,6 +56,7 @@ vec2 getTexCoords(vec3 pos) {
 }
 
 void main() {
+    discard;
     vec3 cartCoords = normalize(inPos);
 
     vec2 texCoords = getTexCoords(cartCoords);
