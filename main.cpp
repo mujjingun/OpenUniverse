@@ -74,13 +74,13 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
     // make multisampling buffer
     const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(2);
-    multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, sampleCount);
+    multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, 1, sampleCount);
 
     // make depth buffer
     depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
     // make render pass
-    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, depthImage.format, 2);
+    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, true, depthImage.format, 2);
 
     // make descriptor sets
     const std::size_t noiseFrameBuffersCount = 3;
@@ -94,11 +94,11 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     // make pipelines
     pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
     terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
-        "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv",
+        "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
         vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
     atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
-        "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv",
+        "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv", nullptr,
         vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
     // make command buffers
@@ -114,31 +114,23 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(2);
     const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
     const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
+    const std::uint32_t noiseLayersCount = 2;
 
     for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-        noiseImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseImageFormat,
-            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-            vk::ImageAspectFlagBits::eColor));
+        noiseImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
+            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
     }
-    noiseDepthImage = context.makeDepthImage(noiseImageExtent, noiseSampleCount);
-    noiseMultiSampleImage = context.makeMultiSampleImage(noiseImageFormat, noiseImageExtent, noiseSampleCount);
-
-    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImageFormat, depthImage.format, 1);
+    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImageFormat, false, {}, 1);
 
     noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
-        { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eAll }, { 1 });
+        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
+        { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
+        { 1, 1 });
 
     noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
-    noisePipeline = context.makePipeline(*noisePipelineLayout, noiseImageExtent, *noiseRenderPass, 0, noiseSampleCount,
-        "shaders/noise.vert.spv", "shaders/noise.frag.spv", nullptr, nullptr,
-        vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
+    noisePipeline = context.makeComputePipeline(*noisePipelineLayout, "shaders/noise.comp.spv");
 
     noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
-
-    for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-        noiseFramebuffers.push_back(context.makeFramebuffer(*noiseImages[i].view, *noiseDepthImage.view,
-            *noiseMultiSampleImage.view, *noiseRenderPass, noiseImageExtent));
-    }
 }
 
 VulkanApplication::VulkanApplication()
@@ -193,6 +185,11 @@ void VulkanApplication::refreshSwapchain()
     recordDrawCommands();
 }
 
+static std::uint32_t ceilDiv(std::uint32_t x, std::uint32_t y)
+{
+    return 1 + ((x - 1) / y);
+}
+
 void VulkanApplication::recordDrawCommands()
 {
     std::array<vk::ClearValue, 2> clearValues{};
@@ -218,7 +215,7 @@ void VulkanApplication::recordDrawCommands()
             commandBuffer->begin(beginInfo);
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_mapBoundsUniformBuffers[index].buffer;
@@ -232,26 +229,27 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[0].descriptorCount = 1;
             descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+            vk::DescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+            imageInfo.imageView = *m_swapchain.noiseImages[index].view;
+            imageInfo.sampler = nullptr;
+
+            descriptorWrites[1].dstSet = m_swapchain.noiseDescriptorSet.sets[index];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = vk::DescriptorType::eStorageImage;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &imageInfo;
+
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
-            vk::RenderPassBeginInfo noiseRenderPassInfo{};
-            noiseRenderPassInfo.renderPass = *m_swapchain.noiseRenderPass;
-            noiseRenderPassInfo.framebuffer = *m_swapchain.noiseFramebuffers[index];
-            noiseRenderPassInfo.renderArea.offset.x = 0;
-            noiseRenderPassInfo.renderArea.offset.y = 0;
-            noiseRenderPassInfo.renderArea.extent = m_swapchain.noiseImages[index].extent;
-            noiseRenderPassInfo.clearValueCount = clearValues.size();
-            noiseRenderPassInfo.pClearValues = clearValues.data();
+            commandBuffer->bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.noisePipeline);
 
-            commandBuffer->beginRenderPass(noiseRenderPassInfo, vk::SubpassContents::eInline);
-            {
-                commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipelineLayout, 0,
-                    { m_swapchain.noiseDescriptorSet.sets[index] }, {});
+            commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eCompute, *m_swapchain.noisePipelineLayout, 0,
+                1, &m_swapchain.noiseDescriptorSet.sets[index], 0, nullptr);
 
-                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.noisePipeline);
-                commandBuffer->draw(4, 1, 0, 0);
-            }
-            commandBuffer->endRenderPass();
+            commandBuffer->dispatch(ceilDiv(m_swapchain.noiseImages[index].extent.width, 32),
+                ceilDiv(m_swapchain.noiseImages[index].extent.height, 32), 1);
 
             commandBuffer->end();
 
@@ -378,6 +376,7 @@ void VulkanApplication::drawFrame()
 
         ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
 
+        // TODO: try logarithmic depth?
         float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);

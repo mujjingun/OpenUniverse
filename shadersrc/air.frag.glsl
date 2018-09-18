@@ -20,7 +20,7 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
     float mapSpanTheta;
 } bounds;
 
-layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
+layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 
 layout(location = 0) out vec4 outColor;
 
@@ -56,13 +56,12 @@ vec2 getTexCoords(vec3 pos) {
 }
 
 void main() {
-    discard;
     vec3 cartCoords = normalize(inPos);
 
     vec2 texCoords = getTexCoords(cartCoords);
 
-    vec4 noise = texture(texSamplers[ubo.noiseIndex], texCoords);
-    float cloudNoise = noise.y;
+    vec4 noise = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 1));
+    float cloudNoise = noise.x;
     const float cloud = smoothstep(0.0f, 1.0f, cloudNoise);
 
     vec3 modelPos = cartCoords;
@@ -75,9 +74,15 @@ void main() {
     float b = (1.0f + thickness) * cosine;
     float D = b * b - thickness * (2.0f + thickness);
     float edgeness = D > 0? 0: 1;
-    float scatterLength = mix(4.0f * (b - sqrt(max(0, D))), 2.0f * cosine * (1.0f + thickness), edgeness);
-    const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
-    scatterLength /= maxScatterLength;
+    float scatterLength;
+    if (length(ubo.modelEyePos) - 1.0f < thickness) {
+        scatterLength = 10.0f;
+    }
+    else {
+        scatterLength = mix(4.0f * (b - sqrt(max(0, D))), 2.0f * cosine * (1.0f + thickness), edgeness);
+        const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
+        scatterLength /= maxScatterLength;
+    }
     vec4 scatterColor = vec4(0.7f, 0.7f, 1.0f, pow(scatterLength, 3) * 0.1f);
     vec4 cloudColor = mix(vec4(vec3(1.0f), cloud), vec4(0.0f), edgeness);
     outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);

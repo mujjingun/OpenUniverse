@@ -32,8 +32,6 @@ struct SwapchainObject {
 
     // noise render pass
     std::vector<ImageObject> noiseImages{};
-    ImageObject noiseDepthImage;
-    ImageObject noiseMultiSampleImage;
 
     vk::UniqueRenderPass noiseRenderPass;
 
@@ -42,7 +40,6 @@ struct SwapchainObject {
     vk::UniquePipeline noisePipeline;
 
     std::vector<vk::UniqueCommandBuffer> noiseCommandBuffers{};
-    std::vector<vk::UniqueFramebuffer> noiseFramebuffers{};
 
     SwapchainObject() = default;
     SwapchainObject(GraphicsContext const& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain = nullptr);

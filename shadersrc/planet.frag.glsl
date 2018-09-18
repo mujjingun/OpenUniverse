@@ -20,7 +20,7 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
     float mapSpanTheta;
 } bounds;
 
-layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
+layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 
 layout(location = 0) out vec4 outColor;
 
@@ -55,28 +55,35 @@ vec2 getTexCoords(vec3 pos) {
     return texCoords;
 }
 
-const float r = 0.01f;
+const float r = 0.002f;
 
 void main() {
     vec3 cartCoords = normalize(inPos);
     vec2 texCoords = getTexCoords(cartCoords);
 
-    vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], texCoords);
+    vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 0));
     float noise = noiseTex.x;
-    vec3 grad = noiseTex.yzw;
-    float biome = 0.0f;
-    float temp = 30.0f;
+
+    float h01 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(-1, 0)).x;
+    float h21 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(1, 0)).x;
+    float h10 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, -1)).x;
+    float h12 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, 1)).x;
+
+    ivec3 size = textureSize(texSamplers[ubo.noiseIndex], 0);
+    vec2 grad = vec2((h21 - h01) * float(size.x), (h12 - h10) * float(size.y)) / bounds.mapSpanTheta;
+    float biome = noiseTex.w;
+    float temp = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 1)).y;
 
     vec2 sphere = vec2(acos(cartCoords.z), atan(cartCoords.y, cartCoords.x));
     vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
     vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
-    vec3 dndt = dgdt * (r * noise + 1) + cartCoords * dot(dgdt, grad) * r;
-    vec3 dndp = dgdp * (r * noise + 1) + cartCoords * dot(dgdp, grad) * r;
+    vec3 dndt = dgdt * (r * noise + 1) + cartCoords * grad.x * r;
+    vec3 dndp = dgdp * (r * noise + 1) + cartCoords * grad.y * r;
 
     vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
     vec3 sandColor = vec3(236, 221, 166) / 256.0f;
-    vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.01f, 0.0101f, noise)), 1.0);
+    vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.0f, 0.001f, noise)), 1.0);
     vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.8f) * (1.0f - pow(abs(noise), 0.5) * .3f), 1.0f);
     float oceanOrTerrain = noise > 0? 1: 0;
     vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
@@ -96,6 +103,5 @@ void main() {
         light += specularFactor * mix(0.5f, 0.05f, oceanOrTerrain);
     }
     outColor = vec4(light * color.xyz, color.a);
-    //outColor = vec4(deriv * 10.0f, 0.0f, 1.0f);
 }
 

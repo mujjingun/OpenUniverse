@@ -22,7 +22,7 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
     float mapSpanTheta;
 } bounds;
 
-layout(set = 0, binding = 2) uniform sampler2D texSamplers[2];
+layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 
 layout (location = 0) in vec3 inPos[];
 
@@ -77,10 +77,10 @@ void main(void)
     const vec3 pos = normalize(interpolate3D(inPos[0], inPos[1], inPos[2], inPos[3]));
     vec2 texCoords = getTexCoords(pos);
 
-    vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], texCoords);
+    vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 0));
     const float noise = max(0, noiseTex.r);
 
-    vec3 modelPos = pos * (1.0f + vec3(noise * 0.01f));
+    vec3 modelPos = pos * (1.0f + vec3(noise * 0.002f));
     worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;
