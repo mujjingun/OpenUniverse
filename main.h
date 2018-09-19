@@ -120,6 +120,7 @@ private:
     glm::vec2 m_deltaCursorPos;
 
     // map related stuff
+    bool m_updateOverallmap;
     bool m_updateHeightmap, m_renderingHeightmap;
     std::size_t m_lastRenderedIndex;
     std::vector<MapBoundsObject> m_mapBounds;

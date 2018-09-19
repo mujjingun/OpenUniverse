@@ -54,6 +54,7 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 iMVP;
     glm::vec4 eyePos;
     glm::vec4 modelEyePos;
     glm::vec4 lightDir;
@@ -98,8 +99,8 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
     atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
-        "shaders/air.vert.spv", "shaders/air.frag.spv", "shaders/air.tesc.spv", "shaders/air.tese.spv", nullptr,
-        vk::PrimitiveTopology::ePatchList, true, false, {}, {});
+        "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
+        vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
     // make command buffers
     commandBuffers = context.allocateCommandBuffers(properties.imageCount);
@@ -175,6 +176,7 @@ void VulkanApplication::refreshSwapchain()
 {
     m_context.device().waitIdle();
 
+    m_updateOverallmap = true;
     m_updateHeightmap = true;
 
     // recreate swapchain
@@ -335,7 +337,7 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer->nextSubpass(vk::SubpassContents::eInline);
 
                 commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
-                commandBuffer->draw(vertexCount, 1, 0, 0);
+                commandBuffer->draw(4, 1, 0, 0);
             }
             commandBuffer->endRenderPass();
 
@@ -382,12 +384,17 @@ void VulkanApplication::drawFrame()
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
         ubo.proj[1][1] *= -1; // invert Y axis
 
+        ubo.iMVP = glm::inverse(ubo.proj * ubo.view * ubo.model);
+
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
 
-        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
+        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, 1, 0)), 0);
 
-        std::size_t nextOffscreenIndex = (m_lastRenderedIndex + 1) % m_swapchain.noiseImages.size();
+        std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
+        if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
+            nextOffscreenIndex = 1;
+        }
         if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_offscreenFence[nextOffscreenIndex]) == vk::Result::eSuccess) {
             m_context.device().resetFences({ *m_offscreenFence[nextOffscreenIndex] });
             m_lastRenderedIndex = nextOffscreenIndex;
@@ -401,10 +408,17 @@ void VulkanApplication::drawFrame()
 
         // update map bounds
         if (!m_renderingHeightmap) {
+            std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
+            if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
+                nextOffscreenIndex = 1;
+            }
+
             const MapBoundsObject mapBounds = m_mapBounds[m_lastRenderedIndex];
-            const glm::vec3 oldMapCenter = { std::sin(mapBounds.mapCenterTheta) * std::cos(mapBounds.mapCenterPhi),
+            const glm::vec3 oldMapCenter = {
+                std::sin(mapBounds.mapCenterTheta) * std::cos(mapBounds.mapCenterPhi),
                 std::sin(mapBounds.mapCenterTheta) * std::sin(mapBounds.mapCenterPhi),
-                std::cos(mapBounds.mapCenterTheta) };
+                std::cos(mapBounds.mapCenterTheta)
+            };
 
             const glm::vec3 normEye = glm::normalize(ubo.modelEyePos);
             const float angle = std::acos(glm::dot(oldMapCenter, normEye));
@@ -414,7 +428,7 @@ void VulkanApplication::drawFrame()
             const bool outOfRange = angle > newMapSpan;
 
             MapBoundsObject newMapBounds;
-            if (tooLarge || tooSmall || outOfRange) {
+            if (m_updateHeightmap || tooLarge || tooSmall || outOfRange) {
                 newMapBounds.mapCenterTheta = std::acos(normEye.z);
                 newMapBounds.mapCenterPhi = std::atan2(normEye.y, normEye.x);
 
@@ -426,29 +440,36 @@ void VulkanApplication::drawFrame()
                     newMapBounds.mapSpanTheta = mapBounds.mapSpanTheta;
                 }
 
-                m_updateHeightmap = true;
+                m_updateHeightmap = false;
                 m_mapBounds[nextOffscreenIndex] = newMapBounds;
+
+                m_context.updateMemory(
+                    *m_mapBoundsUniformBuffers[nextOffscreenIndex].memory, &m_mapBounds[nextOffscreenIndex], sizeof(MapBoundsObject));
+
+                // submit compute shader redraw
+                vk::SubmitInfo submitInfo{};
+                submitInfo.commandBufferCount = 1;
+                submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
+
+                m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[nextOffscreenIndex]);
+
+                m_renderingHeightmap = true;
 
                 std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi..." << std::endl;
             }
-
-            m_context.updateMemory(*m_mapBoundsUniformBuffers[nextOffscreenIndex].memory, &m_mapBounds[nextOffscreenIndex], sizeof(MapBoundsObject));
         }
     }
+
     vk::SubmitInfo submitInfo{};
 
     // submit offscreen pass
-    if (m_updateHeightmap) {
-        std::size_t nextOffscreenIndex = (m_lastRenderedIndex + 1) % m_swapchain.noiseImages.size();
-
-        vk::CommandBuffer offscreenCommandBuffer = *m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
+    if (m_updateOverallmap) {
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+        submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[0];
 
-        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[nextOffscreenIndex]);
+        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[0]);
 
-        m_updateHeightmap = false;
-        m_renderingHeightmap = true;
+        m_updateOverallmap = false;
     }
 
     // execute the command buffer
@@ -504,12 +525,14 @@ void VulkanApplication::run()
 
     m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
 
+    m_updateOverallmap = true;
     m_updateHeightmap = true;
     m_renderingHeightmap = false;
     m_lastRenderedIndex = 0;
-    m_mapBounds[m_lastRenderedIndex].mapCenterTheta = glm::radians(45.0f);
-    m_mapBounds[m_lastRenderedIndex].mapCenterPhi = 0;
-    m_mapBounds[m_lastRenderedIndex].mapSpanTheta = glm::radians(180.0f);
+    m_mapBounds[0].mapCenterTheta = 0;
+    m_mapBounds[0].mapCenterPhi = 0;
+    m_mapBounds[0].mapSpanTheta = glm::radians(180.0f);
+    m_context.updateMemory(*m_mapBoundsUniformBuffers[0].memory, &m_mapBounds[0], sizeof(MapBoundsObject));
 
     glfwSetWindowUserPointer(m_context.window(), this);
     glfwSetKeyCallback(m_context.window(), [](GLFWwindow* window, int key, int scancode, int action, int mods) {

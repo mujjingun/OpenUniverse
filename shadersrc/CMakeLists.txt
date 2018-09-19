@@ -19,8 +19,6 @@ compile_shader(planet.tese.glsl ../shaders/planet.tese.spv)
 compile_shader(planet.frag.glsl ../shaders/planet.frag.spv)
 
 compile_shader(air.vert.glsl ../shaders/air.vert.spv)
-compile_shader(air.tesc.glsl ../shaders/air.tesc.spv)
-compile_shader(air.tese.glsl ../shaders/air.tese.spv)
 compile_shader(air.frag.glsl ../shaders/air.frag.spv)
 
 compile_shader(noise.comp.glsl ../shaders/noise.comp.spv)

@@ -6,6 +6,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
+    mat4 iMVP;
     vec4 eyePos;
     vec4 modelEyePos;
     vec4 lightDir;
@@ -46,13 +47,12 @@ vec2 getTexCoords(vec3 pos) {
                               cos(bounds.mapCenterTheta));
     mat3 rotate = rotationMatrix(normalize(cross(vec3(1, 0, 0), mapCenterCart)), acos(mapCenterCart.x));
 
-    // (theta, phi) in [0, pi] x [-pi, pi]
+    // (theta, phi) in [pi-span, pi+span] x [-span, span] -> [0, 1] x [0, 1]
     vec3 mapCoords = rotate * pos;
     vec2 sphericalCoords = vec2(acos(mapCoords.z), atan(mapCoords.y, mapCoords.x));
     sphericalCoords.x = (sphericalCoords.x - pi / 2) / bounds.mapSpanTheta / 2 + .5f;
     sphericalCoords.y = sphericalCoords.y / bounds.mapSpanTheta / 2 + .5f;
-    vec2 texCoords = vec2(sphericalCoords.x, sphericalCoords.y);
-    return texCoords;
+    return sphericalCoords;
 }
 
 const float r = 0.002f;
@@ -79,6 +79,7 @@ void main() {
     vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
     vec3 dndt = dgdt * (r * noise + 1) + cartCoords * grad.x * r;
     vec3 dndp = dgdp * (r * noise + 1) + cartCoords * grad.y * r;
+    vec3 normal = normalize(cross(dndt, dndp));
 
     vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
@@ -92,16 +93,14 @@ void main() {
     vec3 modelPos = cartCoords * mix(1.0f, 1.0f + noise * r, oceanOrTerrain);
     vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
 
-    vec3 normal = mix(-worldPos, normalize(-cross(dndt, dndp)), oceanOrTerrain);
+    normal = mix(worldPos, normal, oceanOrTerrain);
     float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.1f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
-    vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
+    vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);
     float specularFactor = dot(vertexToEye, lightReflect);
-    if (specularFactor > 0) {
-        specularFactor = pow(specularFactor, 16);
-        light += specularFactor * mix(0.5f, 0.05f, oceanOrTerrain);
-    }
+    specularFactor = pow(max(0, specularFactor), 16);
+    light += specularFactor * mix(0.5f, 0.0f, oceanOrTerrain);
     outColor = vec4(light * color.xyz, color.a);
 }
 

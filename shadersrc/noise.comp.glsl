@@ -151,6 +151,8 @@ const float pi = acos(-1);
 void main()
 {
     ivec3 size = imageSize(image);
+
+    // [0, 1] x [0, 1]
     vec2 inPos = vec2(float(gl_GlobalInvocationID.x) / size.x, float(gl_GlobalInvocationID.y) / size.y);
 
     vec3 mapCenterCart = vec3(sin(ubo.mapCenterTheta) * cos(ubo.mapCenterPhi),
@@ -159,13 +161,15 @@ void main()
     mat3 rotate = rotationMatrix(normalize(cross(vec3(1, 0, 0), mapCenterCart)), -acos(mapCenterCart.x));
 
     const vec2 spherical = vec2(
-                (inPos.x * 2 - 1) * ubo.mapSpanTheta + pi / 2, // [pi/2 - span, pi/2 + span]
-                (inPos.y * 2 - 1) * ubo.mapSpanTheta); // [-span, span]
+                mix(pi / 2 - ubo.mapSpanTheta, pi / 2 + ubo.mapSpanTheta, inPos.x), // [pi/2 - span, pi/2 + span]
+                mix(-ubo.mapSpanTheta, ubo.mapSpanTheta, inPos.y)); // [-span, span]
     const vec3 cartesian = rotate * vec3(sin(spherical.x) * cos(spherical.y), sin(spherical.x) * sin(spherical.y), cos(spherical.x));
 
+    // terrain
     vec3 seed_1 = cartesian * 2;
     float noise_1 = ridgeWithOctaves(seed_1, 12) - max(0, snoise(seed_1 / 2.0f)) * 3.0f - 0.2f;
 
+    // cloud
     const vec3 seed_2 = seed_1 * 2 + vec3(10.0f);
     const float noise_2 = smoothstep(-0.1, 1.0, snoise(seed_2))
             + snoise(seed_2 * 2) / 2
@@ -173,11 +177,13 @@ void main()
             + snoise(seed_2 * 8) / 8
             + snoise(seed_2 * 32) / 16;
 
+    // biome
     const vec3 seed_3 = cartesian + vec3(-5.0f);
     const float noise_3 = snoise(seed_3)
             + snoise(seed_3 * 2) / 2
             + snoise(seed_3 * 8) / 4;
 
+    // temperature
     const vec3 seed_4 = cartesian * 2 + vec3(-5.0f);
     const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 15.0f - max(noise_1, 0) * 3.0f
             + snoise(seed_4) * 2.0f
