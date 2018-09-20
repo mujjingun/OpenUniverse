@@ -44,16 +44,12 @@ mat3 rotationMatrix(vec3 axis, float angle)
 }
 
 vec2 getOverallTexCoords(vec3 pos) {
-    mat3 rotate = rotationMatrix(normalize(vec3(0, 1, 0)), -pi / 2);
-
-    // (theta, phi) in [pi-span, pi+span] x [-span, span] -> [0, 1] x [0, 1]
-    vec3 mapCoords = rotate * pos;
+    vec3 mapCoords = vec3(pos.zy, -pos.x);
     vec2 sphericalCoords = vec2(acos(mapCoords.z), atan(mapCoords.y, mapCoords.x));
     sphericalCoords.x = (sphericalCoords.x - pi / 2) / pi / 2 + .5f;
     sphericalCoords.y = sphericalCoords.y / pi / 2 + .5f;
     return sphericalCoords;
 }
-
 
 int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point)
 {
@@ -82,11 +78,28 @@ void main() {
 
     // inside the atmosphere
     if (dist < thickness) {
-        int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1, cartCoords);
-        if (orientation == 1) {
+        int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
+        if (orientation == 0) {
             discard;
         }
-        outColor = vec4(0.5f, 0.5f, 1.0f, 1.0f);
+
+        vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
+
+        vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
+        float cloudNoise = noise.x;
+
+        const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
+
+        const vec3 modelPos = cartCoords;
+        const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+        const vec3 normal = normalize(worldPos);
+        const float light = max(0.0, dot(ubo.lightDir.xyz, normal));
+
+        vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
+        vec4 cloudColor = vec4(1.0f, 1.0f, 1.0f, cloud);
+        outColor.a = cloudColor.a + scatterColor.a * (1.0f - cloudColor.a);
+        outColor.rgb = (cloudColor.rgb * cloudColor.a + scatterColor.rgb * scatterColor.a * (1.0f - cloudColor.a)) / outColor.a;
+        outColor = vec4(outColor.rgb * light, outColor.a);
         gl_FragDepth = 1.0f - 0.001f;
     }
     // outside the atmosphere
@@ -103,10 +116,10 @@ void main() {
 
         const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
 
-        vec3 modelPos = cartCoords;
-        vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-        vec3 normal = normalize(worldPos);
-        float light = max(0.0, dot(ubo.lightDir.xyz, normal));
+        const vec3 modelPos = cartCoords;
+        const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+        const vec3 normal = normalize(worldPos);
+        const float light = max(0.0, dot(ubo.lightDir.xyz, normal));
 
         vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
         float cosine = dot(vertexToEye, normal);

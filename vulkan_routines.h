@@ -2,6 +2,7 @@
 #define VULKAN_ROUTINES_H
 
 #include <chrono>
+#include <deque>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -114,8 +115,8 @@ public:
     ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, std::uint32_t layerCount,
         vk::SampleCountFlagBits sampleCount) const;
 
-    vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount, vk::Format imageFormat, bool useDepth,
-        vk::Format depthFormat, std::size_t numSubpass) const;
+    vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount,
+        vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat) const;
 
     vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
 

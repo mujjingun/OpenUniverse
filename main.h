@@ -25,6 +25,7 @@ struct SwapchainObject {
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline terrainPipeline;
     vk::UniquePipeline atmospherePipeline;
+    vk::UniquePipeline numbersPipeline;
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
 
@@ -32,8 +33,6 @@ struct SwapchainObject {
 
     // noise render pass
     std::vector<ImageObject> noiseImages{};
-
-    vk::UniqueRenderPass noiseRenderPass;
 
     DescriptorSetObject noiseDescriptorSet;
     vk::UniquePipelineLayout noisePipelineLayout;
@@ -46,7 +45,6 @@ struct SwapchainObject {
 };
 
 struct Vertex;
-
 struct ModelObject {
     BufferObject vertexBuffer;
     BufferObject indexBuffer;
@@ -94,11 +92,12 @@ private:
     std::vector<BufferObject> m_uniformBuffers{};
     std::vector<BufferObject> m_mapBoundsUniformBuffers{};
     std::vector<BufferObject> m_renderMapBoundsUniformBuffers{};
+    std::vector<BufferObject> m_numberBuffers{};
 
     std::size_t m_currentFrame = 0;
 
     // fps calculation
-    double m_averageFps;
+    std::uint32_t m_currentFps = 0;
     std::size_t m_fpsFrameCounter, m_fpsMeasurementsCount;
     std::chrono::system_clock::time_point m_lastFpsTime;
 

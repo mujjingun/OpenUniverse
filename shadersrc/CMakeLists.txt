@@ -22,3 +22,6 @@ compile_shader(air.vert.glsl ../shaders/air.vert.spv)
 compile_shader(air.frag.glsl ../shaders/air.frag.spv)
 
 compile_shader(noise.comp.glsl ../shaders/noise.comp.spv)
+
+compile_shader(numbers.vert.glsl ../shaders/numbers.vert.spv)
+compile_shader(numbers.frag.glsl ../shaders/numbers.frag.spv)

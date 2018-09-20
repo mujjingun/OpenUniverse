@@ -490,13 +490,29 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
             // use triple buffering if possible
             if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
                 return availablePresentMode;
-            } else if (availablePresentMode == vk::PresentModeKHR::eImmediate) {
-                bestMode = availablePresentMode;
             }
         }
 
         return bestMode;
     }();
+
+    std::cout << "Present mode: ";
+    switch (properties.presentMode) {
+        case vk::PresentModeKHR::eFifo:
+            std::cout << "FIFO"; break;
+        case vk::PresentModeKHR::eFifoRelaxed:
+            std::cout << "FIFO_RELAXED"; break;
+        case vk::PresentModeKHR::eImmediate:
+            std::cout << "IMMEDIATE"; break;
+        case vk::PresentModeKHR::eMailbox:
+            std::cout << "MAILBOX"; break;
+        case vk::PresentModeKHR::eSharedContinuousRefresh:
+            std::cout << "SHARED_CONTINUOUS_REFRESH"; break;
+        case vk::PresentModeKHR::eSharedDemandRefresh:
+            std::cout << "SHARED_DEMAND_REFRESH"; break;
+
+    }
+    std::cout << std::endl;
 
     // choose swap surface dimensions
     properties.extent = [&]() {
@@ -853,7 +869,7 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
 }
 
 vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits sampleCount,
-    vk::Format imageFormat, bool useDepth, vk::Format depthFormat, std::size_t numSubpass) const
+    vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat) const
 {
     std::vector<vk::AttachmentDescription> attachments;
 
@@ -870,7 +886,7 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     attachments.push_back(colorAttachment);
 
     // depth attachment
-    if (useDepth) {
+    if (depthFormat != vk::Format::eUndefined) {
         vk::AttachmentDescription depthAttachment;
         depthAttachment.format = depthFormat;
         depthAttachment.samples = sampleCount;
@@ -906,16 +922,16 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
     vk::AttachmentReference multiSampleResolveRef{};
-    multiSampleResolveRef.attachment = useDepth ? 2 : 1;
+    multiSampleResolveRef.attachment = depthFormat != vk::Format::eUndefined ? 2 : 1;
     multiSampleResolveRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
     std::vector<vk::SubpassDependency> dependencies;
-    std::vector<vk::SubpassDescription> subpasses(numSubpass);
-    for (std::uint32_t i = 0; i < numSubpass; ++i) {
+    std::vector<vk::SubpassDescription> subpasses(useDepth.size());
+    for (std::uint32_t i = 0; i < useDepth.size(); ++i) {
         subpasses[i].pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         subpasses[i].colorAttachmentCount = colorAttachmentRefs.size();
         subpasses[i].pColorAttachments = colorAttachmentRefs.data();
-        subpasses[i].pDepthStencilAttachment = useDepth ? &depthAttachmentRef : nullptr;
+        subpasses[i].pDepthStencilAttachment = useDepth[i] ? &depthAttachmentRef : nullptr;
         subpasses[i].pResolveAttachments = &multiSampleResolveRef;
 
         if (i > 0) {

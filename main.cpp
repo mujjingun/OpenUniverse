@@ -81,16 +81,21 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
     // make render pass
-    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format, true, depthImage.format, 2);
+    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format,
+        { true, true, false }, depthImage.format);
 
     // make descriptor sets
     const std::size_t noiseFrameBuffersCount = 3;
     descriptorSet = context.makeDescriptorSet(properties.imageCount,
-        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eCombinedImageSampler },
+        { vk::DescriptorType::eUniformBuffer,
+            vk::DescriptorType::eUniformBuffer,
+            vk::DescriptorType::eCombinedImageSampler,
+            vk::DescriptorType::eUniformBuffer },
         { vk::ShaderStageFlagBits::eAll,
             vk::ShaderStageFlagBits::eAll,
-            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
-        { 1, 1, noiseFrameBuffersCount });
+            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
+            vk::ShaderStageFlagBits::eAll },
+        { 1, 1, noiseFrameBuffersCount, 3 });
 
     // make pipelines
     pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
@@ -100,6 +105,10 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
     atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
         "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
+        vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
+
+    numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 2, sampleCount,
+        "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
         vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
     // make command buffers
@@ -112,7 +121,6 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     }
 
     // make offscreen render target
-    const vk::SampleCountFlagBits noiseSampleCount = context.getMaxUsableSampleCount(2);
     const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
     const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
     const std::uint32_t noiseLayersCount = 2;
@@ -121,7 +129,6 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         noiseImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
             vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
     }
-    noiseRenderPass = context.makeRenderPass(noiseSampleCount, noiseImageFormat, false, {}, 1);
 
     noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
         { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
@@ -135,7 +142,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 }
 
 VulkanApplication::VulkanApplication()
-    : m_context(600, 480, false)
+    : m_context(600, 480, true)
 
     // figure out swapchain properties
     , m_swapchainProps(m_context.selectSwapchainProperties())
@@ -166,6 +173,9 @@ VulkanApplication::VulkanApplication()
     }
     for (std::size_t i = 0; i < m_swapchain.noiseImages.size(); ++i) {
         m_mapBoundsUniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
+    }
+    for (int i = 0; i < 3; ++i) {
+        m_numberBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(std::uint32_t)));
     }
 
     // record draw commands
@@ -265,7 +275,7 @@ void VulkanApplication::recordDrawCommands()
         for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 3> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
@@ -307,6 +317,21 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[2].descriptorCount = static_cast<std::uint32_t>(imageInfos.size());
             descriptorWrites[2].pImageInfo = imageInfos.data();
 
+            std::vector<vk::DescriptorBufferInfo> numBufInfos{};
+            for (auto const& buf : m_numberBuffers) {
+                vk::DescriptorBufferInfo bufInfo;
+                bufInfo.buffer = *buf.buffer;
+                bufInfo.offset = 0;
+                bufInfo.range = VK_WHOLE_SIZE;
+                numBufInfos.push_back(bufInfo);
+            }
+            descriptorWrites[3].dstSet = m_swapchain.descriptorSet.sets[index];
+            descriptorWrites[3].dstBinding = 3;
+            descriptorWrites[3].dstArrayElement = 0;
+            descriptorWrites[3].descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrites[3].descriptorCount = static_cast<std::uint32_t>(numBufInfos.size());
+            descriptorWrites[3].pBufferInfo = numBufInfos.data();
+
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
             // begin recording
@@ -335,8 +360,11 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer->draw(vertexCount, 1, 0, 0);
 
                 commandBuffer->nextSubpass(vk::SubpassContents::eInline);
-
                 commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
+                commandBuffer->draw(4, 1, 0, 0);
+
+                commandBuffer->nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
                 commandBuffer->draw(4, 1, 0, 0);
             }
             commandBuffer->endRenderPass();
@@ -405,6 +433,11 @@ void VulkanApplication::drawFrame()
 
         m_context.updateMemory(*m_uniformBuffers[imageIndex].memory, &ubo, sizeof(UniformBufferObject));
         m_context.updateMemory(*m_renderMapBoundsUniformBuffers[imageIndex].memory, &m_mapBounds[m_lastRenderedIndex], sizeof(MapBoundsObject));
+
+        for (std::uint32_t p = 100, i = 0; p > 0; p /= 10, ++i) {
+            std::uint32_t digit = m_currentFps / p % 10;
+            m_context.updateMemory(*m_numberBuffers[i].memory, &digit, sizeof(std::uint32_t));
+        }
 
         // update map bounds
         if (!m_renderingHeightmap) {
@@ -571,7 +604,7 @@ void VulkanApplication::run()
 
         if (elapsedTime >= seconds(1)) {
             double fps = static_cast<double>(m_fpsFrameCounter) / duration_cast<seconds>(elapsedTime).count();
-            m_averageFps = (m_averageFps * m_fpsMeasurementsCount + fps) / (m_fpsMeasurementsCount + 1);
+            m_currentFps = static_cast<std::uint32_t>(std::round(fps));
 
             m_lastFpsTime = currentTime;
             m_fpsFrameCounter = 0;
@@ -589,7 +622,6 @@ void VulkanApplication::run()
     if (m_context.isFullscreen()) {
         m_context.toggleFullscreenMode();
     }
-    std::cout << "Average fps: " << std::setprecision(0) << std::fixed << m_averageFps << std::endl;
     m_context.device().waitIdle();
 }
 
