@@ -2,6 +2,7 @@
 
 #include <bitset>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <set>
 
@@ -498,19 +499,24 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
 
     std::cout << "Present mode: ";
     switch (properties.presentMode) {
-        case vk::PresentModeKHR::eFifo:
-            std::cout << "FIFO"; break;
-        case vk::PresentModeKHR::eFifoRelaxed:
-            std::cout << "FIFO_RELAXED"; break;
-        case vk::PresentModeKHR::eImmediate:
-            std::cout << "IMMEDIATE"; break;
-        case vk::PresentModeKHR::eMailbox:
-            std::cout << "MAILBOX"; break;
-        case vk::PresentModeKHR::eSharedContinuousRefresh:
-            std::cout << "SHARED_CONTINUOUS_REFRESH"; break;
-        case vk::PresentModeKHR::eSharedDemandRefresh:
-            std::cout << "SHARED_DEMAND_REFRESH"; break;
-
+    case vk::PresentModeKHR::eFifo:
+        std::cout << "FIFO";
+        break;
+    case vk::PresentModeKHR::eFifoRelaxed:
+        std::cout << "FIFO_RELAXED";
+        break;
+    case vk::PresentModeKHR::eImmediate:
+        std::cout << "IMMEDIATE";
+        break;
+    case vk::PresentModeKHR::eMailbox:
+        std::cout << "MAILBOX";
+        break;
+    case vk::PresentModeKHR::eSharedContinuousRefresh:
+        std::cout << "SHARED_CONTINUOUS_REFRESH";
+        break;
+    case vk::PresentModeKHR::eSharedDemandRefresh:
+        std::cout << "SHARED_DEMAND_REFRESH";
+        break;
     }
     std::cout << std::endl;
 
@@ -718,8 +724,7 @@ ou::ImageObject ou::GraphicsContext::makeImage(vk::SampleCountFlagBits numSample
 
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = selectMemoryType(m_physicalDevice, memRequirements.memoryTypeBits,
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    allocInfo.memoryTypeIndex = selectMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
     vk::UniqueDeviceMemory imageMemory = m_device->allocateMemoryUnique(allocInfo);
 
     m_device->bindImageMemory(image.get(), imageMemory.get(), 0);
@@ -734,43 +739,30 @@ ou::ImageObject ou::GraphicsContext::makeImage(vk::SampleCountFlagBits numSample
         std::move(imageView),
         imageInfo.format,
         extent,
-        mipLevels
+        mipLevels,
+        layerCount
     };
 }
 
-static vk::UniqueCommandBuffer beginSingleTimeCommands(vk::Device device, vk::CommandPool pool)
+ou::SingleTimeCommandBuffer ou::GraphicsContext::beginSingleTimeCommands() const
 {
     vk::CommandBufferAllocateInfo allocInfo{};
     allocInfo.level = vk::CommandBufferLevel::ePrimary;
-    allocInfo.commandPool = pool;
+    allocInfo.commandPool = *m_commandPool;
     allocInfo.commandBufferCount = 1;
 
-    vk::UniqueCommandBuffer commandBuffer = std::move(device.allocateCommandBuffersUnique(allocInfo)[0]);
+    vk::UniqueCommandBuffer commandBuffer = std::move(m_device->allocateCommandBuffersUnique(allocInfo)[0]);
 
     vk::CommandBufferBeginInfo beginInfo{};
     beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     commandBuffer->begin(beginInfo);
 
-    return commandBuffer;
+    return SingleTimeCommandBuffer(std::move(commandBuffer), m_graphicsQueue);
 }
 
-static void submitSingleTimeCommands(vk::CommandBuffer commandBuffer, vk::Queue queue)
+void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, std::uint32_t layerCount,
+    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels)
 {
-    commandBuffer.end();
-
-    vk::SubmitInfo submitInfo{};
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    queue.submit({ submitInfo }, nullptr);
-    queue.waitIdle();
-}
-
-void ou::GraphicsContext::transitionImageLayout(vk::Image image, std::uint32_t layerCount, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-    uint32_t mipLevels) const
-{
-    vk::UniqueCommandBuffer commandBuf = beginSingleTimeCommands(*m_device, *m_commandPool);
-
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = oldLayout;
     barrier.newLayout = newLayout;
@@ -818,13 +810,17 @@ void ou::GraphicsContext::transitionImageLayout(vk::Image image, std::uint32_t l
 
         sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
         destinationStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferSrcOptimal) {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
     } else {
         throw std::invalid_argument("unsupported layout transition");
     }
 
-    commandBuf->pipelineBarrier(sourceStage, destinationStage, {}, { nullptr }, { nullptr }, { barrier });
-
-    submitSingleTimeCommands(*commandBuf, m_graphicsQueue);
+    commandBuf.pipelineBarrier(sourceStage, destinationStage, {}, { nullptr }, { nullptr }, { barrier });
 }
 
 ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const
@@ -849,7 +845,7 @@ ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::Sam
         vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
 
     // make it a depth buffer
-    transitionImageLayout(depth.image.get(), 1,
+    transitionImageLayout(*beginSingleTimeCommands(), depth.image.get(), 1,
         vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
 
     return depth;
@@ -862,7 +858,7 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
         vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
         vk::ImageAspectFlagBits::eColor);
 
-    transitionImageLayout(image.image.get(), layerCount,
+    transitionImageLayout(*beginSingleTimeCommands(), image.image.get(), layerCount,
         vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
 
     return image;
@@ -1271,31 +1267,27 @@ vk::UniqueDeviceMemory ou::GraphicsContext::allocateBufferMemory(vk::Buffer buff
     return bufferMemory;
 }
 
-void ou::GraphicsContext::updateMemory(vk::DeviceMemory memory, void* ptr, std::size_t size)
+void ou::GraphicsContext::updateMemory(vk::DeviceMemory memory, void* ptr, std::size_t size) const
 {
     void* memPtr = m_device->mapMemory(memory, 0, size);
     std::memcpy(memPtr, ptr, size);
     m_device->unmapMemory(memory);
 }
 
-static void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size,
-    vk::Device device, vk::CommandPool pool, vk::Queue queue)
+void ou::GraphicsContext::copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) const
 {
-    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(device, pool);
+    auto commandBuffer = beginSingleTimeCommands();
 
     vk::BufferCopy copyRegion{};
     copyRegion.srcOffset = 0;
     copyRegion.dstOffset = 0;
     copyRegion.size = size;
     commandBuffer->copyBuffer(srcBuffer, dstBuffer, { copyRegion });
-
-    submitSingleTimeCommands(commandBuffer.get(), queue);
 }
 
-static void copyBufferToImage(vk::Buffer srcBuffer, vk::Image dstImage, std::uint32_t width, std::uint32_t height,
-    vk::Device device, vk::CommandPool pool, vk::Queue queue)
+void ou::GraphicsContext::copyBufferToImage(vk::Buffer srcBuffer, vk::Image dstImage, uint32_t width, uint32_t height) const
 {
-    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(device, pool);
+    auto commandBuffer = beginSingleTimeCommands();
 
     vk::BufferImageCopy region{};
     region.bufferOffset = 0;
@@ -1316,8 +1308,6 @@ static void copyBufferToImage(vk::Buffer srcBuffer, vk::Image dstImage, std::uin
     region.imageExtent.depth = 1;
 
     commandBuffer->copyBufferToImage(srcBuffer, dstImage, vk::ImageLayout::eTransferDstOptimal, { region });
-
-    submitSingleTimeCommands(commandBuffer.get(), queue);
 }
 
 ou::BufferObject ou::GraphicsContext::constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData,
@@ -1339,7 +1329,7 @@ ou::BufferObject ou::GraphicsContext::constructDeviceLocalBuffer(vk::BufferUsage
     result.memory = allocateBufferMemory(*result.buffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     // copy staging -> vertex buffer
-    copyBuffer(*stagingBuffer, *result.buffer, bufferSize, *m_device, *m_commandPool, m_graphicsQueue);
+    copyBuffer(*stagingBuffer, *result.buffer, bufferSize);
 
     return result;
 }
@@ -1352,12 +1342,6 @@ ou::BufferObject ou::GraphicsContext::makeHostVisibleBuffer(vk::BufferUsageFlags
         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
     return buf;
-}
-
-void ou::GraphicsContext::generateMipmaps(vk::Image image, vk::Format format, vk::Extent2D extent, uint32_t mipLevels) const
-{
-    vk::UniqueCommandBuffer commandBuffer = beginSingleTimeCommands(*m_device, *m_commandPool);
-    generateMipmaps(*commandBuffer, image, format, extent, mipLevels);
 }
 
 void ou::GraphicsContext::generateMipmaps(vk::CommandBuffer commandBuffer, vk::Image image, vk::Format format, vk::Extent2D extent, uint32_t mipLevels) const
@@ -1467,15 +1451,14 @@ ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) cons
         vk::ImageAspectFlagBits::eColor);
 
     // image layout is not gpu accessible by now
-    transitionImageLayout(*texture.image, 1,
-        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
+    transitionImageLayout(*beginSingleTimeCommands(),
+        *texture.image, 1, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
 
     // copy buffer to image
-    copyBufferToImage(*stagingBuffer, *texture.image,
-        imageExtent.width, imageExtent.height, *m_device, *m_commandPool, m_graphicsQueue);
+    copyBufferToImage(*stagingBuffer, *texture.image, imageExtent.width, imageExtent.height);
 
     // generate mipmaps
-    generateMipmaps(*texture.image, imageFormat, imageExtent, mipLevels);
+    generateMipmaps(*beginSingleTimeCommands(), *texture.image, imageFormat, imageExtent, mipLevels);
 
     return texture;
 }
@@ -1545,4 +1528,45 @@ vk::SampleCountFlagBits ou::GraphicsContext::getMaxUsableSampleCount(uint32_t pr
         return vk::SampleCountFlagBits::e2;
     }
     return vk::SampleCountFlagBits::e1;
+}
+
+ou::SingleTimeCommandBuffer::SingleTimeCommandBuffer(vk::UniqueCommandBuffer&& commandBuf, const vk::Queue& queue)
+    : commandBuffer(std::move(commandBuf))
+    , queue(queue)
+{
+}
+
+ou::SingleTimeCommandBuffer::SingleTimeCommandBuffer(ou::SingleTimeCommandBuffer&& other)
+    : commandBuffer(std::move(other.commandBuffer))
+    , queue(other.queue)
+{
+}
+
+ou::SingleTimeCommandBuffer& ou::SingleTimeCommandBuffer::operator=(ou::SingleTimeCommandBuffer&& other)
+{
+    commandBuffer = std::move(other.commandBuffer);
+    queue = other.queue;
+    return *this;
+}
+
+vk::CommandBuffer ou::SingleTimeCommandBuffer::operator*() const
+{
+    return *commandBuffer;
+}
+
+const vk::CommandBuffer* ou::SingleTimeCommandBuffer::operator->() const
+{
+    return &*commandBuffer;
+}
+
+ou::SingleTimeCommandBuffer::~SingleTimeCommandBuffer()
+{
+    commandBuffer->end();
+
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &*commandBuffer;
+
+    queue.submit({ submitInfo }, nullptr);
+    queue.waitIdle();
 }

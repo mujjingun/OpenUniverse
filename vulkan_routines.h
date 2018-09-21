@@ -54,6 +54,7 @@ struct ImageObject {
     vk::Format format;
     vk::Extent2D extent;
     std::uint32_t mipLevels;
+    std::uint32_t layerCount;
 };
 
 struct BufferObject {
@@ -65,6 +66,19 @@ struct DescriptorSetObject {
     vk::UniqueDescriptorSetLayout layout;
     vk::UniqueDescriptorPool pool;
     std::vector<vk::DescriptorSet> sets;
+};
+
+class SingleTimeCommandBuffer {
+    vk::UniqueCommandBuffer commandBuffer;
+    vk::Queue queue;
+
+public:
+    SingleTimeCommandBuffer(vk::UniqueCommandBuffer&& commandBuf, vk::Queue const& queue);
+    SingleTimeCommandBuffer(SingleTimeCommandBuffer&& other);
+    SingleTimeCommandBuffer& operator=(SingleTimeCommandBuffer&& other);
+    vk::CommandBuffer operator*() const;
+    const vk::CommandBuffer *operator->() const;
+    ~SingleTimeCommandBuffer();
 };
 
 class GraphicsContext {
@@ -104,11 +118,10 @@ public:
         vk::ImageAspectFlags imageType, uint32_t mipLevels,
         vk::ImageViewType dimensions = vk::ImageViewType::e2D, uint32_t layerCount = 1) const;
 
+    SingleTimeCommandBuffer beginSingleTimeCommands() const;
+
     ImageObject makeImage(vk::SampleCountFlagBits numSamples, std::uint32_t mipLevels, vk::Extent2D extent, uint32_t layerCount,
         vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlagBits aspect) const;
-
-    void transitionImageLayout(vk::Image image, std::uint32_t layerCount, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-        uint32_t mipLevels) const;
 
     ImageObject makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
 
@@ -145,13 +158,16 @@ public:
 
     vk::UniqueDeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
 
-    void updateMemory(vk::DeviceMemory memory, void* ptr, std::size_t size);
+    void updateMemory(vk::DeviceMemory memory, void* ptr, std::size_t size) const;
+
+    void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) const;
+
+    void copyBufferToImage(vk::Buffer srcBuffer, vk::Image dstImage, std::uint32_t width, std::uint32_t height) const;
 
     BufferObject constructDeviceLocalBuffer(vk::BufferUsageFlags usageFlags, const void* bufferData, std::size_t bufferSize) const;
 
     BufferObject makeHostVisibleBuffer(vk::BufferUsageFlags usageFlags, std::size_t bufferSize) const;
 
-    void generateMipmaps(vk::Image image, vk::Format format, vk::Extent2D extent, std::uint32_t mipLevels) const;
     void generateMipmaps(vk::CommandBuffer commandBuffer, vk::Image image, vk::Format format,
         vk::Extent2D extent, std::uint32_t mipLevels) const;
 
@@ -184,6 +200,9 @@ private:
 
     vk::UniqueCommandPool m_commandPool;
 };
+
+void transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, std::uint32_t layerCount,
+    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels);
 
 } // namespace ou
 

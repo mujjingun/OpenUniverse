@@ -126,9 +126,19 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     const std::uint32_t noiseLayersCount = 2;
 
     for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-        noiseImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
-            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
+        ImageObject image = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
+            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+            vk::ImageAspectFlagBits::eColor);
+
+        transitionImageLayout(*context.beginSingleTimeCommands(), *image.image, image.layerCount,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal, image.mipLevels);
+
+        noiseImages.push_back(std::move(image));
     }
+
+    // Host accessible scratch buffer
+    terrain = context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eTransferDst,
+        static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 16 * noiseLayersCount));
 
     noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
         { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
@@ -142,7 +152,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 }
 
 VulkanApplication::VulkanApplication()
-    : m_context(600, 480, true)
+    : m_context(600, 480, false)
 
     // figure out swapchain properties
     , m_swapchainProps(m_context.selectSwapchainProperties())
@@ -220,6 +230,8 @@ void VulkanApplication::recordDrawCommands()
     {
         std::size_t index = 0;
         for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.noiseCommandBuffers) {
+            ImageObject const& image = m_swapchain.noiseImages[index];
+
             vk::CommandBufferBeginInfo beginInfo{};
             beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
             beginInfo.pInheritanceInfo = nullptr;
@@ -243,7 +255,7 @@ void VulkanApplication::recordDrawCommands()
 
             vk::DescriptorImageInfo imageInfo{};
             imageInfo.imageLayout = vk::ImageLayout::eGeneral;
-            imageInfo.imageView = *m_swapchain.noiseImages[index].view;
+            imageInfo.imageView = *image.view;
             imageInfo.sampler = nullptr;
 
             descriptorWrites[1].dstSet = m_swapchain.noiseDescriptorSet.sets[index];
@@ -260,8 +272,17 @@ void VulkanApplication::recordDrawCommands()
             commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eCompute, *m_swapchain.noisePipelineLayout, 0,
                 1, &m_swapchain.noiseDescriptorSet.sets[index], 0, nullptr);
 
-            commandBuffer->dispatch(ceilDiv(m_swapchain.noiseImages[index].extent.width, 32),
-                ceilDiv(m_swapchain.noiseImages[index].extent.height, 32), 1);
+            commandBuffer->dispatch(ceilDiv(image.extent.width, 32), ceilDiv(image.extent.height, 32), 1);
+
+            vk::BufferImageCopy region{};
+            region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            region.imageSubresource.layerCount = image.layerCount;
+
+            region.imageExtent.width = image.extent.width;
+            region.imageExtent.height = image.extent.height;
+            region.imageExtent.depth = 1;
+
+            commandBuffer->copyImageToBuffer(*image.image, vk::ImageLayout::eTransferSrcOptimal, *m_swapchain.terrain.buffer, { region });
 
             commandBuffer->end();
 
@@ -398,7 +419,7 @@ void VulkanApplication::drawFrame()
     {
         // render pass
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.4f, 0.0f, 0.8f)));
+        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.0f, 0.0f, 1.0f)));
         ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
 
         ubo.eyePos = glm::vec4(m_eyePosition, 0);
@@ -417,7 +438,7 @@ void VulkanApplication::drawFrame()
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
 
-        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, 1, 0)), 0);
+        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, 0, 0)), 0);
 
         std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
@@ -427,6 +448,7 @@ void VulkanApplication::drawFrame()
             m_context.device().resetFences({ *m_offscreenFence[nextOffscreenIndex] });
             m_lastRenderedIndex = nextOffscreenIndex;
             m_renderingHeightmap = false;
+
             std::cout << "finished. current index: " << m_lastRenderedIndex << std::endl;
         }
         ubo.readyNoiseImageIndex = static_cast<std::uint32_t>(m_lastRenderedIndex);
@@ -488,7 +510,9 @@ void VulkanApplication::drawFrame()
 
                 m_renderingHeightmap = true;
 
-                std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi..." << std::endl;
+                std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi, "
+                          << "theta = " << newMapBounds.mapCenterTheta
+                          << ", phi = " << newMapBounds.mapCenterPhi << std::endl;
             }
         }
     }
@@ -551,9 +575,9 @@ void VulkanApplication::run()
 
     m_planetRotateAngle = 0.0f;
 
-    m_eyePosition = glm::vec3(0.0f, 3.0f, 0.0f);
-    m_lookDirection = glm::vec3(0.0f, -1.0f, 0.0f);
-    m_upDirection = glm::vec3(0.0f, 0.0f, 1.0f);
+    m_eyePosition = glm::vec3(0.0f, 0.0f, 3.0f);
+    m_lookDirection = glm::vec3(0.0f, 0.0f, -1.0f);
+    m_upDirection = glm::vec3(1.0f, 0.0f, 0.0f);
     m_movingForward = m_movingBackward = m_rotatingLeft = m_rotatingRight = false;
 
     m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
@@ -630,7 +654,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    //m_planetRotateAngle += dt / 128.0f * glm::radians(90.0f);
+    m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
 
     const float r = 0.1f;
     glm::vec2 smoothDelta{};

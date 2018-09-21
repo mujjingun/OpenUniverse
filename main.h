@@ -33,6 +33,7 @@ struct SwapchainObject {
 
     // noise render pass
     std::vector<ImageObject> noiseImages{};
+    BufferObject terrain;
 
     DescriptorSetObject noiseDescriptorSet;
     vk::UniquePipelineLayout noisePipelineLayout;

@@ -41,14 +41,7 @@ mat3 rotationMatrix(vec3 axis, float angle)
                 oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c        );
 }
 
-vec2 getTexCoords(vec3 pos) {
-    vec3 mapCenterCart = vec3(sin(bounds.mapCenterTheta) * cos(bounds.mapCenterPhi),
-                              sin(bounds.mapCenterTheta) * sin(bounds.mapCenterPhi),
-                              cos(bounds.mapCenterTheta));
-    mat3 rotate = rotationMatrix(normalize(cross(vec3(1, 0, 0), mapCenterCart)), acos(mapCenterCart.x));
-
-    // (theta, phi) in [pi-span, pi+span] x [-span, span] -> [0, 1] x [0, 1]
-    vec3 mapCoords = rotate * pos;
+vec2 getTexCoords(vec3 mapCoords) {
     vec2 sphericalCoords = vec2(acos(mapCoords.z), atan(mapCoords.y, mapCoords.x));
     sphericalCoords.x = (sphericalCoords.x - pi / 2) / bounds.mapSpanTheta / 2 + .5f;
     sphericalCoords.y = sphericalCoords.y / bounds.mapSpanTheta / 2 + .5f;
@@ -63,70 +56,78 @@ vec2 getOverallTexCoords(vec3 pos) {
     return sphericalCoords;
 }
 
-float fogFactorExp2(float dist, float density) {
-    const float LOG2 = -1.442695;
-    float d = density * dist;
-    return 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
-}
-
-int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point)
-{
-    vec3 dir = normalize(p1 - p0);
-    vec3 diff = center - p0;
-    float t0 = dot(diff, dir);
-    float d2 = dot(diff, diff) - t0 * t0;
-    if (d2 > r * r) {
-        return 0;
-    }
-
-    float t1 = sqrt(r * r - d2);
-    if (t0 < t1) {
-        t1 = -t1;
-    }
-    point = p0 + dir * (t0 - t1);
-    return t0 > 0? 1 : -1;
-}
-
 const float r = 0.002f;
+
+// returns unnormalized normal
+vec3 getNormal(vec3 coords, float noise, vec2 grad) {
+    vec2 sphere = vec2(acos(coords.z), atan(coords.y, coords.x));
+    vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
+    vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
+    vec3 dndt = r * grad.x * coords + dgdt * (1 + r * noise);
+    vec3 dndp = r * grad.y * coords + dgdp * (1 + r * noise);
+    return cross(dndt, dndp);
+}
+
+vec2 getGradient(vec2 texCoords) {
+    const float h01 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(-1, 0)).x;
+    const float h21 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(1, 0)).x;
+    const float h10 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, -1)).x;
+    const float h12 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, 1)).x;
+
+    const ivec3 size = textureSize(texSamplers[ubo.noiseIndex], 0);
+    return vec2(h21 - h01, h12 - h10) * size.xy / bounds.mapSpanTheta;
+}
 
 void main() {
     vec3 cartCoords = normalize(inPos);
-    vec2 texCoords = getTexCoords(cartCoords);
 
+    vec3 mapCenterCart = vec3(sin(bounds.mapCenterTheta) * cos(bounds.mapCenterPhi),
+                              sin(bounds.mapCenterTheta) * sin(bounds.mapCenterPhi),
+                              cos(bounds.mapCenterTheta));
+
+    const vec3 axis = normalize(vec3(0, -mapCenterCart.z, mapCenterCart.y));
+    const float s = sqrt(1 - mapCenterCart.x * mapCenterCart.x);
+    const float c = mapCenterCart.x;
+    const float oc = 1.0 - c;
+
+    const mat3 rotate = mat3(c, -axis.z * s, axis.y * s,
+                             axis.z * s, oc * axis.y * axis.y + c, oc * axis.y * axis.z,
+                             -axis.y * s, oc * axis.y * axis.z, oc * axis.z * axis.z + c);
+    const mat3 irotate = mat3(c, axis.z * s, -axis.y * s,
+                              -axis.z * s, oc * axis.y * axis.y + c, oc * axis.y * axis.z,
+                              axis.y * s, oc * axis.y * axis.z, oc * axis.z * axis.z + c);
+
+    vec3 mapCoords = rotate * cartCoords;
+    vec2 texCoords = getTexCoords(mapCoords);
     vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 0));
+
     float noise = noiseTex.x;
+    vec2 grad = getGradient(texCoords);
 
-    float h01 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(-1, 0)).x;
-    float h21 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(1, 0)).x;
-    float h10 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, -1)).x;
-    float h12 = textureOffset(texSamplers[ubo.noiseIndex], vec3(texCoords, 0), ivec2(0, 1)).x;
+    vec3 normal = normalize(mat3(ubo.model) * irotate * getNormal(mapCoords, noise, grad));
+    vec3 flatNormal = normalize(mat3(ubo.model) * cartCoords);
 
-    ivec3 size = textureSize(texSamplers[ubo.noiseIndex], 0);
-    vec2 grad = vec2((h21 - h01) * float(size.x), (h12 - h10) * float(size.y)) / bounds.mapSpanTheta;
+    // biome
     float biome = noiseTex.w;
-    float temp = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 1)).y;
-
-    vec2 sphere = vec2(acos(cartCoords.z), atan(cartCoords.y, cartCoords.x));
-    vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
-    vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
-    vec3 dndt = r * grad.x * cartCoords + dgdt * (1 + r * noise);
-    vec3 dndp = r * grad.y * cartCoords + dgdp * (1 + r * noise);
-    vec3 normal = normalize(cross(dndt, dndp));
-
     vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
+    // ocean
     vec3 sandColor = vec3(236, 221, 166) / 256.0f;
     vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.0f, 0.001f, noise)), 1.0);
     vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.8f) * (1.0f - pow(abs(noise), 0.5) * .3f), 1.0f);
     float oceanOrTerrain = noise > 0? 1: 0;
     vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
+
+    // ice
+    float temp = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 1)).y;
     color = mix(vec4(1.0f), color, smoothstep(0.0f, 0.01f, temp));
 
+    // lighting
     vec3 modelPos = cartCoords * mix(1.0f, 1.0f + noise * r, oceanOrTerrain);
-    vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+    vec3 worldPos = mat3(ubo.model) * modelPos;
 
-    normal = mix(worldPos, normal, oceanOrTerrain);
-    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.2f;
+    normal = mix(flatNormal, normal, oceanOrTerrain);
+    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.05f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);

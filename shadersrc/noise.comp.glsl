@@ -166,7 +166,7 @@ void main()
     const vec3 cartesian = rotate * vec3(sin(spherical.x) * cos(spherical.y), sin(spherical.x) * sin(spherical.y), cos(spherical.x));
 
     // terrain
-    vec3 seed_1 = cartesian * 2;
+    vec3 seed_1 = cartesian * 2 + vec3(-4.0f);
     float noise_1 = ridgeWithOctaves(seed_1, 12) - max(0, snoise(seed_1 / 2.0f)) * 3.0f - 0.2f;
 
     // cloud
