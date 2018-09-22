@@ -10,7 +10,7 @@ layout (location = 0) in vec2 texCoords;
 
 void main()
 {
-    const float exposure = 1.0;
+    const float exposure = 0.3;
     const float gamma = 2.2;
     vec3 hdrColor = texture(image, texCoords).rgb;
     vec3 mapped = vec3(1.0) - exp(-hdrColor * exposure);

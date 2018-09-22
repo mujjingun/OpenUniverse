@@ -32,14 +32,10 @@ struct SwapchainObject {
     std::vector<vk::UniqueFramebuffer> hdrFramebuffers{};
 
     // present & bloom shader
-    vk::UniqueRenderPass renderPass;
-
     DescriptorSetObject bloomDescriptorSet;
 
     vk::UniquePipelineLayout bloomPipelineLayout;
     vk::UniquePipeline bloomPipeline;
-
-    std::vector<vk::UniqueFramebuffer> framebuffers{};
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
 
@@ -97,7 +93,7 @@ private:
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
     std::vector<vk::UniqueFence> m_inFlightFences;
-    std::vector<vk::UniqueFence> m_offscreenFence;
+    std::vector<vk::UniqueFence> m_offscreenFences;
 
     ImageObject m_textureImage;
     vk::UniqueSampler m_sampler;

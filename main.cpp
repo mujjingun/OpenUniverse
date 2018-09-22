@@ -91,7 +91,151 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         }
 
         // make render pass
-        hdrRenderPass = context.makeRenderPass(sampleCount, hdrFormat, { true, true, false }, depthImage.format, true);
+        std::vector<vk::SubpassDescription> subpasses;
+
+        vk::AttachmentReference hdrAttachmentRef;
+        hdrAttachmentRef.attachment = 0;
+        hdrAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::AttachmentReference depthAttachmentRef;
+        depthAttachmentRef.attachment = 1;
+        depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+        vk::AttachmentReference multiSampleAttachmentRef;
+        multiSampleAttachmentRef.attachment = 2;
+        multiSampleAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::AttachmentReference bloomAttachmentRef;
+        bloomAttachmentRef.attachment = 3;
+        bloomAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::SubpassDescription terrainSubpass;
+        terrainSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        terrainSubpass.colorAttachmentCount = 1;
+        terrainSubpass.pColorAttachments = &hdrAttachmentRef;
+        terrainSubpass.pDepthStencilAttachment = &depthAttachmentRef;
+        terrainSubpass.pResolveAttachments = &multiSampleAttachmentRef;
+        subpasses.push_back(terrainSubpass);
+
+        vk::SubpassDescription atmosphereSubpass;
+        atmosphereSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        atmosphereSubpass.colorAttachmentCount = 1;
+        atmosphereSubpass.pColorAttachments = &hdrAttachmentRef;
+        atmosphereSubpass.pDepthStencilAttachment = &depthAttachmentRef;
+        atmosphereSubpass.pResolveAttachments = &multiSampleAttachmentRef;
+        subpasses.push_back(atmosphereSubpass);
+
+        vk::SubpassDescription numbersSubpass;
+        numbersSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        numbersSubpass.colorAttachmentCount = 1;
+        numbersSubpass.pColorAttachments = &hdrAttachmentRef;
+        numbersSubpass.pDepthStencilAttachment = nullptr;
+        numbersSubpass.pResolveAttachments = &multiSampleAttachmentRef;
+        subpasses.push_back(numbersSubpass);
+
+        vk::SubpassDescription bloomSubpass;
+        bloomSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        bloomSubpass.colorAttachmentCount = 1;
+        bloomSubpass.pColorAttachments = &bloomAttachmentRef;
+        bloomSubpass.pDepthStencilAttachment = nullptr;
+        bloomSubpass.pResolveAttachments = nullptr;
+        subpasses.push_back(bloomSubpass);
+
+        // define dependencies
+        std::vector<vk::SubpassDependency> dependencies;
+
+        // terrain
+        vk::SubpassDependency terrainDependency;
+        terrainDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        terrainDependency.dstSubpass = 0;
+        terrainDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        terrainDependency.srcAccessMask = {};
+        terrainDependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        terrainDependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
+        dependencies.push_back(terrainDependency);
+
+        // atmosphere
+        vk::SubpassDependency atmosphereDependency;
+        atmosphereDependency.srcSubpass = 0;
+        atmosphereDependency.dstSubpass = 1;
+        atmosphereDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+        atmosphereDependency.srcAccessMask = {};
+        atmosphereDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+        atmosphereDependency.dstAccessMask = {};
+        dependencies.push_back(atmosphereDependency);
+
+        // numbers
+        vk::SubpassDependency numbersDependency;
+        numbersDependency.srcSubpass = 1;
+        numbersDependency.dstSubpass = 2;
+        numbersDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+        numbersDependency.srcAccessMask = {};
+        numbersDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+        numbersDependency.dstAccessMask = {};
+        dependencies.push_back(numbersDependency);
+
+        // bloom
+        vk::SubpassDependency bloomDependency;
+        bloomDependency.srcSubpass = 2;
+        bloomDependency.dstSubpass = 3;
+        bloomDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        bloomDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+        bloomDependency.dstStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+        bloomDependency.dstAccessMask = {};
+        dependencies.push_back(bloomDependency);
+
+        // define attachments
+        std::vector<vk::AttachmentDescription> attachments;
+
+        // hdr color attachment
+        vk::AttachmentDescription hdrAttachment;
+        hdrAttachment.format = hdrFormat;
+        hdrAttachment.samples = sampleCount;
+        hdrAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        hdrAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        hdrAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        hdrAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        hdrAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        hdrAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        attachments.push_back(hdrAttachment);
+
+        // depth attachment
+        vk::AttachmentDescription depthAttachment;
+        depthAttachment.format = depthImage.format;
+        depthAttachment.samples = sampleCount;
+        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        attachments.push_back(depthAttachment);
+
+        // multisample resolve attachment
+        vk::AttachmentDescription multiSampleAttachment;
+        multiSampleAttachment.format = multiSampleImage.format;
+        multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
+        multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        multiSampleAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        attachments.push_back(multiSampleAttachment);
+
+        // bloom color attachment
+        vk::AttachmentDescription bloomAttachment;
+        bloomAttachment.format = properties.surfaceFormat.format;
+        bloomAttachment.samples = vk::SampleCountFlagBits::e1;
+        bloomAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        bloomAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        bloomAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        bloomAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        bloomAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        bloomAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+        attachments.push_back(bloomAttachment);
+
+        hdrRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
 
         // make descriptor sets
         descriptorSet = context.makeDescriptorSet(properties.imageCount,
@@ -119,31 +263,21 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
             "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
-        // make hdr framebuffers
-        for (std::size_t i = 0; i < properties.imageCount; ++i) {
-            hdrFramebuffers.push_back(context.makeFramebuffer(*hdrImages[i].view, *depthImage.view, *multiSampleImage.view,
-                *hdrRenderPass, properties.extent));
-        }
-    }
-
-    // present stage
-    {
-        renderPass = context.makeRenderPass(vk::SampleCountFlagBits::e1, properties.surfaceFormat.format,
-            { false }, vk::Format::eUndefined, false);
-
         bloomDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eCombinedImageSampler },
             { vk::ShaderStageFlagBits::eFragment },
             { 1 });
 
         bloomPipelineLayout = context.makePipelineLayout(*bloomDescriptorSet.layout);
-        bloomPipeline = context.makePipeline(*bloomPipelineLayout, properties.extent, *renderPass, 0, vk::SampleCountFlagBits::e1,
+        bloomPipeline = context.makePipeline(*bloomPipelineLayout, properties.extent, *hdrRenderPass, 3, vk::SampleCountFlagBits::e1,
             "shaders/bloom.vert.spv", "shaders/bloom.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
 
-        // make framebuffers
-        for (auto const& swapchainImageView : swapchainImageViews) {
-            framebuffers.push_back(context.makeFramebuffer(*swapchainImageView, nullptr, nullptr, *renderPass, properties.extent));
+        // make hdr framebuffers
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            hdrFramebuffers.push_back(context.makeFramebuffer(
+                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view, *swapchainImageViews[i] },
+                *hdrRenderPass, properties.extent));
         }
 
         // make present command buffers
@@ -197,7 +331,7 @@ VulkanApplication::VulkanApplication()
     , m_imageAvailableSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_renderFinishedSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_inFlightFences(m_context.makeFences(maxFramesInFlight, true))
-    , m_offscreenFence(m_context.makeFences(static_cast<std::uint32_t>(m_swapchain.noiseImages.size()), false))
+    , m_offscreenFences(m_context.makeFences(static_cast<std::uint32_t>(m_swapchain.noiseImages.size()), false))
 
     // make textures
     , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
@@ -225,12 +359,18 @@ VulkanApplication::VulkanApplication()
     recordDrawCommands();
 }
 
+static const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
+
 void VulkanApplication::refreshSwapchain()
 {
     m_context.device().waitIdle();
 
     m_updateOverallmap = true;
     m_updateHeightmap = true;
+
+    for (const auto& fence : m_offscreenFences) {
+        m_context.device().resetFences({ *fence });
+    }
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
@@ -247,7 +387,7 @@ static std::uint32_t ceilDiv(std::uint32_t x, std::uint32_t y)
 
 void VulkanApplication::recordDrawCommands()
 {
-    std::array<vk::ClearValue, 2> clearValues{};
+    std::array<vk::ClearValue, 4> clearValues{};
 
     // color buffer clear value
     clearValues[0].color.float32[0] = 0.0f;
@@ -258,6 +398,18 @@ void VulkanApplication::recordDrawCommands()
     // depth buffer clear value
     clearValues[1].depthStencil.depth = 1.0f;
     clearValues[1].depthStencil.stencil = 0;
+
+    // color buffer clear value
+    clearValues[2].color.float32[0] = 0.0f;
+    clearValues[2].color.float32[1] = 0.0f;
+    clearValues[2].color.float32[2] = 0.0f;
+    clearValues[2].color.float32[3] = 1.0f;
+
+    // color buffer clear value
+    clearValues[3].color.float32[0] = 0.0f;
+    clearValues[3].color.float32[1] = 0.0f;
+    clearValues[3].color.float32[2] = 0.0f;
+    clearValues[3].color.float32[3] = 1.0f;
 
     // record offscreen rendering
     {
@@ -386,7 +538,7 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[3].pBufferInfo = numBufInfos.data();
 
             vk::DescriptorImageInfo hdrImageInfo{};
-            hdrImageInfo.imageLayout = vk::ImageLayout::ePresentSrcKHR;
+            hdrImageInfo.imageLayout = vk::ImageLayout::eUndefined;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
@@ -432,24 +584,10 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
                 commandBuffer.draw(4, 1, 0, 0);
-            }
-            commandBuffer.endRenderPass();
 
-            // bloom shader rendering
-            vk::RenderPassBeginInfo bloomRenderPassInfo{};
-            bloomRenderPassInfo.renderPass = *m_swapchain.renderPass;
-            bloomRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
-            bloomRenderPassInfo.renderArea.offset.x = 0;
-            bloomRenderPassInfo.renderArea.offset.y = 0;
-            bloomRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
-            bloomRenderPassInfo.clearValueCount = clearValues.size();
-            bloomRenderPassInfo.pClearValues = clearValues.data();
-
-            commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
-            {
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipelineLayout, 0,
                     { m_swapchain.bloomDescriptorSet.sets[index] }, {});
-
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipeline);
                 commandBuffer.draw(4, 1, 0, 0);
             }
@@ -466,8 +604,6 @@ void VulkanApplication::drawFrame()
     // 1. Acquire an image from the swap chain
     // 2. Execute the command buffer with that image as attachment in the framebuffer
     // 3. Return the image to the swap chain for presentation
-
-    const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
 
     vk::Fence inFlightFence = *m_inFlightFences[m_currentFrame];
     m_context.device().waitForFences({ inFlightFence }, VK_TRUE, timeOut);
@@ -507,8 +643,8 @@ void VulkanApplication::drawFrame()
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
             nextOffscreenIndex = 1;
         }
-        if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_offscreenFence[nextOffscreenIndex]) == vk::Result::eSuccess) {
-            m_context.device().resetFences({ *m_offscreenFence[nextOffscreenIndex] });
+        if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_offscreenFences[nextOffscreenIndex]) == vk::Result::eSuccess) {
+            m_context.device().resetFences({ *m_offscreenFences[nextOffscreenIndex] });
             m_lastRenderedIndex = nextOffscreenIndex;
             m_renderingHeightmap = false;
 
@@ -569,7 +705,7 @@ void VulkanApplication::drawFrame()
                 submitInfo.commandBufferCount = 1;
                 submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
 
-                m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[nextOffscreenIndex]);
+                m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFences[nextOffscreenIndex]);
 
                 m_renderingHeightmap = true;
 
@@ -587,7 +723,7 @@ void VulkanApplication::drawFrame()
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[0];
 
-        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFence[0]);
+        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFences[0]);
 
         m_updateOverallmap = false;
     }

@@ -127,7 +127,7 @@ void main() {
     vec3 worldPos = mat3(ubo.model) * modelPos;
 
     normal = mix(flatNormal, normal, oceanOrTerrain);
-    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) * 5.0f + 0.001f;
+    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) * 10.0f + 0.001f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);

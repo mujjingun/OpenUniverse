@@ -171,11 +171,11 @@ void main()
 
     // cloud
     const vec3 seed_2 = seed_1 * 2 + vec3(10.0f);
-    const float noise_2 = smoothstep(-0.1, 1.0, snoise(seed_2))
-            + snoise(seed_2 * 2) / 2
+    const float noise_2 = smoothstep(-0.5, .3, snoise(seed_2)) *
+            (snoise(seed_2 * 2) / 2
             + snoise(seed_2 * 4) / 4
             + snoise(seed_2 * 8) / 8
-            + snoise(seed_2 * 32) / 16;
+            + snoise(seed_2 * 32) / 16);
 
     // biome
     const vec3 seed_3 = cartesian + vec3(-5.0f);

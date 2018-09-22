@@ -864,96 +864,9 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
     return image;
 }
 
-vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits sampleCount,
-    vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat, bool useMSAA) const
+vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(std::vector<vk::SubpassDescription> const& subpasses,
+    std::vector<vk::SubpassDependency> const& dependencies, std::vector<vk::AttachmentDescription> const& attachments) const
 {
-    std::vector<vk::AttachmentDescription> attachments;
-
-    // color attachment
-    vk::AttachmentDescription colorAttachment;
-    colorAttachment.format = imageFormat;
-    colorAttachment.samples = sampleCount;
-    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-    colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-    colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
-    colorAttachment.finalLayout = useMSAA ? vk::ImageLayout::eColorAttachmentOptimal : vk::ImageLayout::ePresentSrcKHR;
-    attachments.push_back(colorAttachment);
-
-    // depth attachment
-    if (depthFormat != vk::Format::eUndefined) {
-        vk::AttachmentDescription depthAttachment;
-        depthAttachment.format = depthFormat;
-        depthAttachment.samples = sampleCount;
-        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-        depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-        depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-        attachments.push_back(depthAttachment);
-    }
-
-    // multisample resolve attachment
-    if (useMSAA) {
-        vk::AttachmentDescription multiSampleAttachment;
-        multiSampleAttachment.format = imageFormat;
-        multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
-        multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        multiSampleAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
-        attachments.push_back(multiSampleAttachment);
-    }
-
-    std::array<vk::AttachmentReference, 1> colorAttachmentRefs{};
-    // layout(location = 0) out vec4 outColor
-    colorAttachmentRefs[0].attachment = 0;
-    colorAttachmentRefs[0].layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-    // only 1 depth attachment allowed
-    vk::AttachmentReference depthAttachmentRef{};
-    depthAttachmentRef.attachment = 1;
-    depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-
-    vk::AttachmentReference multiSampleResolveRef{};
-    multiSampleResolveRef.attachment = depthFormat != vk::Format::eUndefined ? 2 : 1;
-    multiSampleResolveRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-    std::vector<vk::SubpassDependency> dependencies;
-    std::vector<vk::SubpassDescription> subpasses(useDepth.size());
-    for (std::uint32_t i = 0; i < useDepth.size(); ++i) {
-        subpasses[i].pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        subpasses[i].colorAttachmentCount = colorAttachmentRefs.size();
-        subpasses[i].pColorAttachments = colorAttachmentRefs.data();
-        subpasses[i].pDepthStencilAttachment = useDepth[i] ? &depthAttachmentRef : nullptr;
-        subpasses[i].pResolveAttachments = useMSAA ? &multiSampleResolveRef : nullptr;
-
-        if (i > 0) {
-            vk::SubpassDependency dependency{};
-            dependency.srcSubpass = i - 1;
-            dependency.dstSubpass = i;
-            dependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-            dependency.srcAccessMask = {};
-            dependency.dstStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-            dependency.dstAccessMask = {};
-            dependencies.push_back(dependency);
-        }
-    }
-
-    // wait until the image is loaded
-    vk::SubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    dependency.srcAccessMask = {};
-    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
-    dependencies.push_back(dependency);
-
     vk::RenderPassCreateInfo renderPassInfo{};
     renderPassInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
     renderPassInfo.pAttachments = attachments.data();
@@ -1194,27 +1107,17 @@ std::vector<vk::UniqueCommandBuffer> ou::GraphicsContext::allocateCommandBuffers
     return m_device->allocateCommandBuffersUnique(allocInfo);
 }
 
-vk::UniqueFramebuffer ou::GraphicsContext::makeFramebuffer(vk::ImageView imageView, vk::ImageView depthImageView,
-    vk::ImageView multiSampleImageView, vk::RenderPass renderPass, vk::Extent2D swapChainExtent, std::size_t layerCount) const
+vk::UniqueFramebuffer ou::GraphicsContext::makeFramebuffer(std::vector<vk::ImageView> imageViews, vk::RenderPass renderPass,
+    vk::Extent2D extent, std::size_t layerCount) const
 {
     vk::FramebufferCreateInfo framebufferInfo = {};
     framebufferInfo.renderPass = renderPass;
 
-    std::vector<vk::ImageView> attachments;
+    framebufferInfo.attachmentCount = static_cast<std::uint32_t>(imageViews.size());
+    framebufferInfo.pAttachments = imageViews.data();
 
-    if (multiSampleImageView) {
-        attachments.push_back(multiSampleImageView);
-    }
-    if (depthImageView) {
-        attachments.push_back(depthImageView);
-    }
-    attachments.push_back(imageView);
-
-    framebufferInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-    framebufferInfo.pAttachments = attachments.data();
-
-    framebufferInfo.width = swapChainExtent.width;
-    framebufferInfo.height = swapChainExtent.height;
+    framebufferInfo.width = extent.width;
+    framebufferInfo.height = extent.height;
     framebufferInfo.layers = static_cast<std::uint32_t>(layerCount);
 
     return m_device->createFramebufferUnique(framebufferInfo);

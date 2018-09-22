@@ -77,7 +77,7 @@ public:
     SingleTimeCommandBuffer(SingleTimeCommandBuffer&& other);
     SingleTimeCommandBuffer& operator=(SingleTimeCommandBuffer&& other);
     vk::CommandBuffer operator*() const;
-    const vk::CommandBuffer *operator->() const;
+    const vk::CommandBuffer* operator->() const;
     ~SingleTimeCommandBuffer();
 };
 
@@ -128,8 +128,9 @@ public:
     ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, std::uint32_t layerCount,
         vk::SampleCountFlagBits sampleCount) const;
 
-    vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount,
-        vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat, bool useMSAA) const;
+    vk::UniqueRenderPass makeRenderPass(std::vector<vk::SubpassDescription> const& subpasses,
+        std::vector<vk::SubpassDependency> const& dependencies,
+        std::vector<vk::AttachmentDescription> const& attachments) const;
 
     vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
 
@@ -146,9 +147,8 @@ public:
 
     std::vector<vk::UniqueCommandBuffer> allocateCommandBuffers(std::uint32_t count) const;
 
-    vk::UniqueFramebuffer makeFramebuffer(vk::ImageView imageViews,
-        vk::ImageView depthImageView, vk::ImageView multiSampleImageView,
-        vk::RenderPass renderPass, vk::Extent2D swapChainExtent, std::size_t layerCount = 1) const;
+    vk::UniqueFramebuffer makeFramebuffer(std::vector<vk::ImageView> imageViews,
+        vk::RenderPass renderPass, vk::Extent2D extent, std::size_t layerCount = 1) const;
 
     std::vector<vk::UniqueSemaphore> makeSemaphores(std::uint32_t count) const;
     std::vector<vk::UniqueFence> makeFences(std::uint32_t count, bool signaled) const;
