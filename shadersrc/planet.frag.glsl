@@ -9,7 +9,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 iMVP;
     vec4 eyePos;
     vec4 modelEyePos;
-    vec4 lightDir;
+    vec4 lightPos;
     int parallelCount;
     int meridianCount;
     uint noiseIndex;
@@ -127,13 +127,14 @@ void main() {
     vec3 worldPos = mat3(ubo.model) * modelPos;
 
     normal = mix(flatNormal, normal, oceanOrTerrain);
-    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) * 10.0f + 0.001f;
+    vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
+    float light = max(0.0f, dot(lightDir, normal)) * 10.0f + 0.001f;
 
-    vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
+    vec3 lightReflect = normalize(reflect(lightDir, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);
     float specularFactor = dot(vertexToEye, lightReflect);
     specularFactor = pow(max(0, specularFactor), 16);
-    light += specularFactor * mix(0.5f, 0.0f, oceanOrTerrain);
+    light += specularFactor * mix(10.0, 0.0f, oceanOrTerrain);
     outColor = vec4(light * color.xyz, color.a);
 
     // fog

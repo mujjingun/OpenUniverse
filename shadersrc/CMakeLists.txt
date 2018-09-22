@@ -26,5 +26,8 @@ compile_shader(noise.comp.glsl ../shaders/noise.comp.spv)
 compile_shader(numbers.vert.glsl ../shaders/numbers.vert.spv)
 compile_shader(numbers.frag.glsl ../shaders/numbers.frag.spv)
 
-compile_shader(bloom.vert.glsl ../shaders/bloom.vert.spv)
-compile_shader(bloom.frag.glsl ../shaders/bloom.frag.spv)
+compile_shader(bloomh.vert.glsl ../shaders/bloomh.vert.spv)
+compile_shader(bloomh.frag.glsl ../shaders/bloomh.frag.spv)
+
+compile_shader(bloomv.vert.glsl ../shaders/bloomv.vert.spv)
+compile_shader(bloomv.frag.glsl ../shaders/bloomv.frag.spv)

@@ -19,8 +19,9 @@ struct SwapchainObject {
     ImageObject multiSampleImage;
     ImageObject depthImage;
     std::vector<ImageObject> hdrImages{};
+    std::vector<ImageObject> bloomImages{};
 
-    vk::UniqueRenderPass hdrRenderPass;
+    vk::UniqueRenderPass renderPass;
 
     DescriptorSetObject descriptorSet;
 
@@ -29,13 +30,17 @@ struct SwapchainObject {
     vk::UniquePipeline atmospherePipeline;
     vk::UniquePipeline numbersPipeline;
 
-    std::vector<vk::UniqueFramebuffer> hdrFramebuffers{};
+    std::vector<vk::UniqueFramebuffer> framebuffers{};
 
     // present & bloom shader
-    DescriptorSetObject bloomDescriptorSet;
+    DescriptorSetObject bloomHDescriptorSet;
+    DescriptorSetObject bloomVDescriptorSet;
 
-    vk::UniquePipelineLayout bloomPipelineLayout;
-    vk::UniquePipeline bloomPipeline;
+    vk::UniquePipelineLayout bloomHPipelineLayout;
+    vk::UniquePipeline bloomHPipeline;
+
+    vk::UniquePipelineLayout bloomVPipelineLayout;
+    vk::UniquePipeline bloomVPipeline;
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
 

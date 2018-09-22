@@ -14,6 +14,8 @@
 namespace ou {
 
 static const std::size_t maxFramesInFlight = 2;
+static const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
+static const std::uint32_t maxSampleCount = 2;
 
 struct Vertex {
     glm::vec3 pos;
@@ -57,7 +59,7 @@ struct UniformBufferObject {
     glm::mat4 iMVP;
     glm::vec4 eyePos;
     glm::vec4 modelEyePos;
-    glm::vec4 lightDir;
+    glm::vec4 lightPos;
     std::int32_t parallelCount;
     std::int32_t meridianCount;
     std::uint32_t readyNoiseImageIndex;
@@ -77,7 +79,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     // hdr stage
     {
         // make multisampling buffer
-        const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(2);
+        const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(maxSampleCount);
         const vk::Format hdrFormat = vk::Format::eR16G16B16A16Sfloat;
         multiSampleImage = context.makeMultiSampleImage(hdrFormat, properties.extent, 1, sampleCount);
 
@@ -87,6 +89,8 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         // make hdr float buffer
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
             hdrImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
+            bloomImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
                 vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
         }
 
@@ -108,6 +112,10 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         vk::AttachmentReference bloomAttachmentRef;
         bloomAttachmentRef.attachment = 3;
         bloomAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::AttachmentReference presentAttachmentRef;
+        presentAttachmentRef.attachment = 4;
+        presentAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
         vk::SubpassDescription terrainSubpass;
         terrainSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
@@ -133,13 +141,21 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         numbersSubpass.pResolveAttachments = &multiSampleAttachmentRef;
         subpasses.push_back(numbersSubpass);
 
-        vk::SubpassDescription bloomSubpass;
-        bloomSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        bloomSubpass.colorAttachmentCount = 1;
-        bloomSubpass.pColorAttachments = &bloomAttachmentRef;
-        bloomSubpass.pDepthStencilAttachment = nullptr;
-        bloomSubpass.pResolveAttachments = nullptr;
-        subpasses.push_back(bloomSubpass);
+        vk::SubpassDescription bloomSubpassH;
+        bloomSubpassH.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        bloomSubpassH.colorAttachmentCount = 1;
+        bloomSubpassH.pColorAttachments = &bloomAttachmentRef;
+        bloomSubpassH.pDepthStencilAttachment = nullptr;
+        bloomSubpassH.pResolveAttachments = nullptr;
+        subpasses.push_back(bloomSubpassH);
+
+        vk::SubpassDescription bloomSubpassV;
+        bloomSubpassV.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        bloomSubpassV.colorAttachmentCount = 1;
+        bloomSubpassV.pColorAttachments = &presentAttachmentRef;
+        bloomSubpassV.pDepthStencilAttachment = nullptr;
+        bloomSubpassV.pResolveAttachments = nullptr;
+        subpasses.push_back(bloomSubpassV);
 
         // define dependencies
         std::vector<vk::SubpassDependency> dependencies;
@@ -174,15 +190,25 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         numbersDependency.dstAccessMask = {};
         dependencies.push_back(numbersDependency);
 
-        // bloom
-        vk::SubpassDependency bloomDependency;
-        bloomDependency.srcSubpass = 2;
-        bloomDependency.dstSubpass = 3;
-        bloomDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        bloomDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-        bloomDependency.dstStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-        bloomDependency.dstAccessMask = {};
-        dependencies.push_back(bloomDependency);
+        // bloom horizontal
+        vk::SubpassDependency bloomHDependency;
+        bloomHDependency.srcSubpass = 2;
+        bloomHDependency.dstSubpass = 3;
+        bloomHDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        bloomHDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+        bloomHDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
+        bloomHDependency.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+        dependencies.push_back(bloomHDependency);
+
+        // bloom vertical
+        vk::SubpassDependency bloomVDependency;
+        bloomVDependency.srcSubpass = 3;
+        bloomVDependency.dstSubpass = 4;
+        bloomVDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        bloomVDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+        bloomVDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
+        bloomVDependency.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+        dependencies.push_back(bloomVDependency);
 
         // define attachments
         std::vector<vk::AttachmentDescription> attachments;
@@ -192,7 +218,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         hdrAttachment.format = hdrFormat;
         hdrAttachment.samples = sampleCount;
         hdrAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-        hdrAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        hdrAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
         hdrAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         hdrAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         hdrAttachment.initialLayout = vk::ImageLayout::eUndefined;
@@ -216,7 +242,7 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         multiSampleAttachment.format = multiSampleImage.format;
         multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
         multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
         multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
@@ -225,17 +251,29 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
         // bloom color attachment
         vk::AttachmentDescription bloomAttachment;
-        bloomAttachment.format = properties.surfaceFormat.format;
+        bloomAttachment.format = hdrFormat;
         bloomAttachment.samples = vk::SampleCountFlagBits::e1;
-        bloomAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        bloomAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
         bloomAttachment.storeOp = vk::AttachmentStoreOp::eStore;
         bloomAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         bloomAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         bloomAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        bloomAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+        bloomAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
         attachments.push_back(bloomAttachment);
 
-        hdrRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
+        // present attachment
+        vk::AttachmentDescription presentAttachment;
+        presentAttachment.format = properties.surfaceFormat.format;
+        presentAttachment.samples = vk::SampleCountFlagBits::e1;
+        presentAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+        presentAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        presentAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        presentAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        presentAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        presentAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+        attachments.push_back(presentAttachment);
+
+        renderPass = context.makeRenderPass(subpasses, dependencies, attachments);
 
         // make descriptor sets
         descriptorSet = context.makeDescriptorSet(properties.imageCount,
@@ -251,33 +289,43 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
         // make pipelines
         pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
-        terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 0, sampleCount,
+        terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
             "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
             vk::PrimitiveTopology::ePatchList, true, false, {}, {});
 
-        atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 1, sampleCount,
+        atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
             "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
-        numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 2, sampleCount,
+        numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 2, sampleCount,
             "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
-        bloomDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+        bloomHDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eCombinedImageSampler },
             { vk::ShaderStageFlagBits::eFragment },
             { 1 });
 
-        bloomPipelineLayout = context.makePipelineLayout(*bloomDescriptorSet.layout);
-        bloomPipeline = context.makePipeline(*bloomPipelineLayout, properties.extent, *hdrRenderPass, 3, vk::SampleCountFlagBits::e1,
-            "shaders/bloom.vert.spv", "shaders/bloom.frag.spv", nullptr, nullptr, nullptr,
+        bloomVDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eCombinedImageSampler, vk::DescriptorType::eCombinedImageSampler },
+            { vk::ShaderStageFlagBits::eFragment, vk::ShaderStageFlagBits::eFragment },
+            { 1, 1 });
+
+        bloomHPipelineLayout = context.makePipelineLayout(*bloomHDescriptorSet.layout);
+        bloomHPipeline = context.makePipeline(*bloomHPipelineLayout, properties.extent, *renderPass, 3, vk::SampleCountFlagBits::e1,
+            "shaders/bloomh.vert.spv", "shaders/bloomh.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
+
+        bloomVPipelineLayout = context.makePipelineLayout(*bloomVDescriptorSet.layout);
+        bloomVPipeline = context.makePipeline(*bloomVPipelineLayout, properties.extent, *renderPass, 4, vk::SampleCountFlagBits::e1,
+            "shaders/bloomv.vert.spv", "shaders/bloomv.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
 
         // make hdr framebuffers
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
-            hdrFramebuffers.push_back(context.makeFramebuffer(
-                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view, *swapchainImageViews[i] },
-                *hdrRenderPass, properties.extent));
+            framebuffers.push_back(context.makeFramebuffer(
+                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view, *bloomImages[i].view, *swapchainImageViews[i] },
+                *renderPass, properties.extent));
         }
 
         // make present command buffers
@@ -358,8 +406,6 @@ VulkanApplication::VulkanApplication()
     // record draw commands
     recordDrawCommands();
 }
-
-static const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
 
 void VulkanApplication::refreshSwapchain()
 {
@@ -480,7 +526,7 @@ void VulkanApplication::recordDrawCommands()
         for (std::size_t index = 0; index < m_swapchainProps.imageCount; ++index) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 5> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
@@ -542,12 +588,31 @@ void VulkanApplication::recordDrawCommands()
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
-            descriptorWrites[4].dstSet = m_swapchain.bloomDescriptorSet.sets[index];
+            descriptorWrites[4].dstSet = m_swapchain.bloomHDescriptorSet.sets[index];
             descriptorWrites[4].dstBinding = 0;
             descriptorWrites[4].dstArrayElement = 0;
             descriptorWrites[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             descriptorWrites[4].descriptorCount = 1;
             descriptorWrites[4].pImageInfo = &hdrImageInfo;
+
+            vk::DescriptorImageInfo bloomImageInfo{};
+            bloomImageInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            bloomImageInfo.imageView = *m_swapchain.bloomImages[index].view;
+            bloomImageInfo.sampler = *m_sampler;
+
+            descriptorWrites[5].dstSet = m_swapchain.bloomVDescriptorSet.sets[index];
+            descriptorWrites[5].dstBinding = 0;
+            descriptorWrites[5].dstArrayElement = 0;
+            descriptorWrites[5].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[5].descriptorCount = 1;
+            descriptorWrites[5].pImageInfo = &bloomImageInfo;
+
+            descriptorWrites[6].dstSet = m_swapchain.bloomVDescriptorSet.sets[index];
+            descriptorWrites[6].dstBinding = 1;
+            descriptorWrites[6].dstArrayElement = 0;
+            descriptorWrites[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[6].descriptorCount = 1;
+            descriptorWrites[6].pImageInfo = &hdrImageInfo;
 
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
@@ -560,8 +625,8 @@ void VulkanApplication::recordDrawCommands()
             commandBuffer.begin(beginInfo);
 
             vk::RenderPassBeginInfo mainRenderPassInfo{};
-            mainRenderPassInfo.renderPass = *m_swapchain.hdrRenderPass;
-            mainRenderPassInfo.framebuffer = *m_swapchain.hdrFramebuffers[index];
+            mainRenderPassInfo.renderPass = *m_swapchain.renderPass;
+            mainRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
             mainRenderPassInfo.renderArea.offset.x = 0;
             mainRenderPassInfo.renderArea.offset.y = 0;
             mainRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
@@ -586,9 +651,15 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.draw(4, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipelineLayout, 0,
-                    { m_swapchain.bloomDescriptorSet.sets[index] }, {});
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipeline);
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
+                    { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
+                commandBuffer.draw(4, 1, 0, 0);
+
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipelineLayout, 0,
+                    { m_swapchain.bloomVDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipeline);
                 commandBuffer.draw(4, 1, 0, 0);
             }
             commandBuffer.endRenderPass();
@@ -637,7 +708,7 @@ void VulkanApplication::drawFrame()
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
 
-        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
+        ubo.lightPos = glm::vec4(glm::vec3(20, -20, 0), 0);
 
         std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {

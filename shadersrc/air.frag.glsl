@@ -11,7 +11,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 iMVP;
     vec4 eyePos;
     vec4 modelEyePos;
-    vec4 lightDir;
+    vec4 lightPos;
     int parallelCount;
     int meridianCount;
     uint noiseIndex;
@@ -76,65 +76,72 @@ void main() {
     vec3 cartCoords;
     float dist = length(ubo.modelEyePos) - 1;
 
+    outColor = vec4(0.0f);
+    gl_FragDepth = 0;
+
     // inside the atmosphere
     if (dist < thickness) {
         int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
-        if (orientation == 0) {
-            discard;
+        if (orientation != 0) {
+            vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
+
+            vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
+            float cloudNoise = noise.x;
+
+            const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
+
+            const vec3 modelPos = cartCoords;
+            const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+            const vec3 normal = normalize(worldPos);
+            const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
+            const float light = max(0.0, dot(lightDir, normal));
+
+            vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
+            vec4 cloudColor = vec4(1.0f, 1.0f, 1.0f, cloud);
+            outColor.a = cloudColor.a + scatterColor.a * (1.0f - cloudColor.a);
+            outColor.rgb = (cloudColor.rgb * cloudColor.a + scatterColor.rgb * scatterColor.a * (1.0f - cloudColor.a)) / outColor.a;
+            outColor = vec4(outColor.rgb * light, outColor.a);
+            gl_FragDepth = 1.0f - 0.001f;
         }
-
-        vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
-
-        vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
-        float cloudNoise = noise.x;
-
-        const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
-
-        const vec3 modelPos = cartCoords;
-        const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-        const vec3 normal = normalize(worldPos);
-        const float light = max(0.0, dot(ubo.lightDir.xyz, normal));
-
-        vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
-        vec4 cloudColor = vec4(1.0f, 1.0f, 1.0f, cloud);
-        outColor.a = cloudColor.a + scatterColor.a * (1.0f - cloudColor.a);
-        outColor.rgb = (cloudColor.rgb * cloudColor.a + scatterColor.rgb * scatterColor.a * (1.0f - cloudColor.a)) / outColor.a;
-        outColor = vec4(outColor.rgb * light, outColor.a);
-        gl_FragDepth = 1.0f - 0.001f;
     }
     // outside the atmosphere
     if (dist >= thickness) {
         int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
-        if (orientation != 1) {
-            discard;
+        if (orientation > 0) {
+            vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
+
+            vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
+            float cloudNoise = noise.x;
+
+            const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
+
+            const vec3 modelPos = cartCoords;
+            const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
+            const vec3 normal = normalize(worldPos);
+            const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
+            const float light = max(0.0, dot(lightDir, normal)) * 10.0f + 0.001f;
+
+            vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
+            float cosine = dot(vertexToEye, normal);
+            float b = (1.0f + thickness) * cosine;
+            float D = b * b - thickness * (2.0f + thickness);
+            float edgeness = D > 0? 0: 1;
+            float scatterLength = mix(2.0f * (b - sqrt(max(0, D))), 2.0f * cosine * (1.0f + thickness), edgeness);
+            const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
+            scatterLength /= maxScatterLength;
+            vec4 scatterColor = vec4(0.7f, 0.7f, 1.0f, pow(scatterLength, 3) * 0.1f);
+            vec4 cloudColor = mix(vec4(vec3(1.0f), cloud), vec4(0.0f), edgeness);
+            outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
+            outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
+            outColor = vec4(outColor.rgb * light, outColor.a);
+            gl_FragDepth = 0;
         }
+    }
 
-        vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
-
-        vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
-        float cloudNoise = noise.x;
-
-        const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
-
-        const vec3 modelPos = cartCoords;
-        const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-        const vec3 normal = normalize(worldPos);
-        const float light = max(0.0, dot(ubo.lightDir.xyz, normal)) * 10.0f + 0.001f;
-
-        vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
-        float cosine = dot(vertexToEye, normal);
-        float b = (1.0f + thickness) * cosine;
-        float D = b * b - thickness * (2.0f + thickness);
-        float edgeness = D > 0? 0: 1;
-        float scatterLength = mix(2.0f * (b - sqrt(max(0, D))), 2.0f * cosine * (1.0f + thickness), edgeness);
-        const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
-        scatterLength /= maxScatterLength;
-        vec4 scatterColor = vec4(0.7f, 0.7f, 1.0f, pow(scatterLength, 3) * 0.1f);
-        vec4 cloudColor = mix(vec4(vec3(1.0f), cloud), vec4(0.0f), edgeness);
-        outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
-        outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
-        outColor = vec4(outColor.rgb * light, outColor.a);
-        gl_FragDepth = 0;
+    // the sun
+    int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, ubo.lightPos.xyz, 1.0, cartCoords);
+    if (orientation > 0) {
+        outColor += vec4(100.0, 100.0, 100.0, 1.0);
     }
 }
 
