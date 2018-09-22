@@ -28,13 +28,13 @@ struct SwapchainObject {
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline terrainPipeline;
     vk::UniquePipeline atmospherePipeline;
-    vk::UniquePipeline numbersPipeline;
 
     std::vector<vk::UniqueFramebuffer> framebuffers{};
 
     // present & bloom shader
     DescriptorSetObject bloomHDescriptorSet;
     DescriptorSetObject bloomVDescriptorSet;
+    DescriptorSetObject numbersDescriptorSet;
 
     vk::UniquePipelineLayout bloomHPipelineLayout;
     vk::UniquePipeline bloomHPipeline;
@@ -42,9 +42,14 @@ struct SwapchainObject {
     vk::UniquePipelineLayout bloomVPipelineLayout;
     vk::UniquePipeline bloomVPipeline;
 
+    vk::UniquePipelineLayout numbersPipelineLayout;
+    vk::UniquePipeline numbersPipeline;
+
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
 
     // noise render pass
+    std::vector<vk::UniqueFence> noiseFences;
+
     std::vector<ImageObject> noiseImages{};
     BufferObject terrain;
 
@@ -98,7 +103,6 @@ private:
     std::vector<vk::UniqueSemaphore> m_imageAvailableSemaphores{};
     std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphores{};
     std::vector<vk::UniqueFence> m_inFlightFences;
-    std::vector<vk::UniqueFence> m_offscreenFences;
 
     ImageObject m_textureImage;
     vk::UniqueSampler m_sampler;

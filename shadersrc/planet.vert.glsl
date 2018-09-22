@@ -53,7 +53,7 @@ void main() {
                      cos(bounds.mapCenterTheta));
     mat3 rotate = rotationMatrix(normalize(cross(norm, vec3(1, 0, 0))), acos(norm.x));
 
-    float thetaEnd = bounds.mapSpanTheta;
+    float thetaEnd = bounds.mapSpanTheta * 2;
     float theta = mix(pi / 2 - thetaEnd, pi / 2 + thetaEnd, float(parallelIndex) / ubo.parallelCount);
     float phi = mix(-thetaEnd, +thetaEnd, float(meridianIndex) / ubo.meridianCount);
 

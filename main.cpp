@@ -133,14 +133,6 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         atmosphereSubpass.pResolveAttachments = &multiSampleAttachmentRef;
         subpasses.push_back(atmosphereSubpass);
 
-        vk::SubpassDescription numbersSubpass;
-        numbersSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        numbersSubpass.colorAttachmentCount = 1;
-        numbersSubpass.pColorAttachments = &hdrAttachmentRef;
-        numbersSubpass.pDepthStencilAttachment = nullptr;
-        numbersSubpass.pResolveAttachments = &multiSampleAttachmentRef;
-        subpasses.push_back(numbersSubpass);
-
         vk::SubpassDescription bloomSubpassH;
         bloomSubpassH.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         bloomSubpassH.colorAttachmentCount = 1;
@@ -156,6 +148,14 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         bloomSubpassV.pDepthStencilAttachment = nullptr;
         bloomSubpassV.pResolveAttachments = nullptr;
         subpasses.push_back(bloomSubpassV);
+
+        vk::SubpassDescription numbersSubpass;
+        numbersSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        numbersSubpass.colorAttachmentCount = 1;
+        numbersSubpass.pColorAttachments = &presentAttachmentRef;
+        numbersSubpass.pDepthStencilAttachment = nullptr;
+        numbersSubpass.pResolveAttachments = nullptr;
+        subpasses.push_back(numbersSubpass);
 
         // define dependencies
         std::vector<vk::SubpassDependency> dependencies;
@@ -180,20 +180,10 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         atmosphereDependency.dstAccessMask = {};
         dependencies.push_back(atmosphereDependency);
 
-        // numbers
-        vk::SubpassDependency numbersDependency;
-        numbersDependency.srcSubpass = 1;
-        numbersDependency.dstSubpass = 2;
-        numbersDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-        numbersDependency.srcAccessMask = {};
-        numbersDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
-        numbersDependency.dstAccessMask = {};
-        dependencies.push_back(numbersDependency);
-
         // bloom horizontal
         vk::SubpassDependency bloomHDependency;
-        bloomHDependency.srcSubpass = 2;
-        bloomHDependency.dstSubpass = 3;
+        bloomHDependency.srcSubpass = 1;
+        bloomHDependency.dstSubpass = 2;
         bloomHDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
         bloomHDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
         bloomHDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
@@ -202,13 +192,23 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
         // bloom vertical
         vk::SubpassDependency bloomVDependency;
-        bloomVDependency.srcSubpass = 3;
-        bloomVDependency.dstSubpass = 4;
+        bloomVDependency.srcSubpass = 2;
+        bloomVDependency.dstSubpass = 3;
         bloomVDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
         bloomVDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
         bloomVDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
         bloomVDependency.dstAccessMask = vk::AccessFlagBits::eShaderRead;
         dependencies.push_back(bloomVDependency);
+
+        // numbers
+        vk::SubpassDependency numbersDependency;
+        numbersDependency.srcSubpass = 3;
+        numbersDependency.dstSubpass = 4;
+        numbersDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
+        numbersDependency.srcAccessMask = {};
+        numbersDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+        numbersDependency.dstAccessMask = {};
+        dependencies.push_back(numbersDependency);
 
         // define attachments
         std::vector<vk::AttachmentDescription> attachments;
@@ -279,13 +279,11 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         descriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eUniformBuffer,
                 vk::DescriptorType::eUniformBuffer,
-                vk::DescriptorType::eCombinedImageSampler,
-                vk::DescriptorType::eUniformBuffer },
+                vk::DescriptorType::eCombinedImageSampler },
             { vk::ShaderStageFlagBits::eAll,
                 vk::ShaderStageFlagBits::eAll,
-                vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
-                vk::ShaderStageFlagBits::eAll },
-            { 1, 1, noiseFrameBuffersCount, 3 });
+                vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
+            { 1, 1, noiseFrameBuffersCount });
 
         // make pipelines
         pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
@@ -295,10 +293,6 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
 
         atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
             "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
-
-        numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 2, sampleCount,
-            "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
         bloomHDescriptorSet = context.makeDescriptorSet(properties.imageCount,
@@ -312,14 +306,22 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
             { 1, 1 });
 
         bloomHPipelineLayout = context.makePipelineLayout(*bloomHDescriptorSet.layout);
-        bloomHPipeline = context.makePipeline(*bloomHPipelineLayout, properties.extent, *renderPass, 3, vk::SampleCountFlagBits::e1,
+        bloomHPipeline = context.makePipeline(*bloomHPipelineLayout, properties.extent, *renderPass, 2, vk::SampleCountFlagBits::e1,
             "shaders/bloomh.vert.spv", "shaders/bloomh.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
 
         bloomVPipelineLayout = context.makePipelineLayout(*bloomVDescriptorSet.layout);
-        bloomVPipeline = context.makePipeline(*bloomVPipelineLayout, properties.extent, *renderPass, 4, vk::SampleCountFlagBits::e1,
+        bloomVPipeline = context.makePipeline(*bloomVPipelineLayout, properties.extent, *renderPass, 3, vk::SampleCountFlagBits::e1,
             "shaders/bloomv.vert.spv", "shaders/bloomv.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
+
+        numbersDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eFragment }, { 3 });
+
+        numbersPipelineLayout = context.makePipelineLayout(*numbersDescriptorSet.layout);
+        numbersPipeline = context.makePipeline(*numbersPipelineLayout, properties.extent, *renderPass, 4, vk::SampleCountFlagBits::e1,
+            "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
 
         // make hdr framebuffers
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
@@ -338,6 +340,8 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
         const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
         const vk::Format noiseImageFormat = vk::Format::eR16G16B16A16Sfloat;
         const std::uint32_t noiseLayersCount = 2;
+
+        noiseFences = context.makeFences(noiseFrameBuffersCount, false);
 
         for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
             ImageObject image = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
@@ -379,7 +383,6 @@ VulkanApplication::VulkanApplication()
     , m_imageAvailableSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_renderFinishedSemaphores(m_context.makeSemaphores(maxFramesInFlight))
     , m_inFlightFences(m_context.makeFences(maxFramesInFlight, true))
-    , m_offscreenFences(m_context.makeFences(static_cast<std::uint32_t>(m_swapchain.noiseImages.size()), false))
 
     // make textures
     , m_textureImage(m_context.makeTextureImage("textures/texture.jpg"))
@@ -412,11 +415,8 @@ void VulkanApplication::refreshSwapchain()
     m_context.device().waitIdle();
 
     m_updateOverallmap = true;
+    m_renderingHeightmap = false;
     m_updateHeightmap = true;
-
-    for (const auto& fence : m_offscreenFences) {
-        m_context.device().resetFences({ *fence });
-    }
 
     // recreate swapchain
     m_swapchainProps = m_context.selectSwapchainProperties();
@@ -576,8 +576,8 @@ void VulkanApplication::recordDrawCommands()
                 bufInfo.range = VK_WHOLE_SIZE;
                 numBufInfos.push_back(bufInfo);
             }
-            descriptorWrites[3].dstSet = m_swapchain.descriptorSet.sets[index];
-            descriptorWrites[3].dstBinding = 3;
+            descriptorWrites[3].dstSet = m_swapchain.numbersDescriptorSet.sets[index];
+            descriptorWrites[3].dstBinding = 0;
             descriptorWrites[3].dstArrayElement = 0;
             descriptorWrites[3].descriptorType = vk::DescriptorType::eUniformBuffer;
             descriptorWrites[3].descriptorCount = static_cast<std::uint32_t>(numBufInfos.size());
@@ -647,10 +647,6 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.draw(4, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
-                commandBuffer.draw(4, 1, 0, 0);
-
-                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
                     { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
@@ -660,6 +656,12 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipelineLayout, 0,
                     { m_swapchain.bloomVDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipeline);
+                commandBuffer.draw(4, 1, 0, 0);
+
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipelineLayout, 0,
+                    { m_swapchain.numbersDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
                 commandBuffer.draw(4, 1, 0, 0);
             }
             commandBuffer.endRenderPass();
@@ -714,8 +716,8 @@ void VulkanApplication::drawFrame()
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
             nextOffscreenIndex = 1;
         }
-        if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_offscreenFences[nextOffscreenIndex]) == vk::Result::eSuccess) {
-            m_context.device().resetFences({ *m_offscreenFences[nextOffscreenIndex] });
+        if (m_renderingHeightmap && m_context.device().getFenceStatus(*m_swapchain.noiseFences[nextOffscreenIndex]) == vk::Result::eSuccess) {
+            m_context.device().resetFences({ *m_swapchain.noiseFences[nextOffscreenIndex] });
             m_lastRenderedIndex = nextOffscreenIndex;
             m_renderingHeightmap = false;
 
@@ -776,7 +778,7 @@ void VulkanApplication::drawFrame()
                 submitInfo.commandBufferCount = 1;
                 submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
 
-                m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFences[nextOffscreenIndex]);
+                m_context.graphicsQueue2().submit({ submitInfo }, *m_swapchain.noiseFences[nextOffscreenIndex]);
 
                 m_renderingHeightmap = true;
 
@@ -794,9 +796,11 @@ void VulkanApplication::drawFrame()
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[0];
 
-        m_context.graphicsQueue2().submit({ submitInfo }, *m_offscreenFences[0]);
+        m_context.graphicsQueue2().submit({ submitInfo }, *m_swapchain.noiseFences[0]);
 
         m_updateOverallmap = false;
+
+        std::cout << "updating overall map" << std::endl;
     }
 
     // execute the command buffer

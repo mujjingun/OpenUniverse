@@ -69,6 +69,8 @@ int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point)
     return t0 > 0? 1 : -1;
 }
 
+const float lightIntensity = 10.0f;
+
 void main() {
     vec4 unproj0 = ubo.iMVP * vec4(inPos, 0.0f, 1.0f);
     unproj0.xyz /= unproj0.w;
@@ -94,7 +96,7 @@ void main() {
             const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
             const vec3 normal = normalize(worldPos);
             const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-            const float light = max(0.0, dot(lightDir, normal));
+            const float light = max(0.0, dot(lightDir, normal)) * lightIntensity + 0.001f;
 
             vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
             vec4 cloudColor = vec4(1.0f, 1.0f, 1.0f, cloud);
@@ -119,7 +121,7 @@ void main() {
             const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
             const vec3 normal = normalize(worldPos);
             const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-            const float light = max(0.0, dot(lightDir, normal)) * 10.0f + 0.001f;
+            const float light = max(0.0, dot(lightDir, normal)) * lightIntensity + 0.001f;
 
             vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
             float cosine = dot(vertexToEye, normal);
