@@ -69,86 +69,119 @@ SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProper
     swapchain = context.makeSwapchain(properties, oldSwapchain);
     swapchainImages = context.retrieveSwapchainImages(*swapchain);
     for (const auto& image : swapchainImages) {
-        swapchainImageViews.push_back(context.makeImageView(image,
-            properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
+        swapchainImageViews.push_back(context.makeImageView(image, properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
     }
 
-    // make multisampling buffer
-    const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(2);
-    multiSampleImage = context.makeMultiSampleImage(properties.surfaceFormat.format, properties.extent, 1, sampleCount);
-
-    // make depth buffer
-    depthImage = context.makeDepthImage(properties.extent, sampleCount);
-
-    // make render pass
-    renderPass = context.makeRenderPass(sampleCount, properties.surfaceFormat.format,
-        { true, true, false }, depthImage.format);
-
-    // make descriptor sets
     const std::size_t noiseFrameBuffersCount = 3;
-    descriptorSet = context.makeDescriptorSet(properties.imageCount,
-        { vk::DescriptorType::eUniformBuffer,
-            vk::DescriptorType::eUniformBuffer,
-            vk::DescriptorType::eCombinedImageSampler,
-            vk::DescriptorType::eUniformBuffer },
-        { vk::ShaderStageFlagBits::eAll,
-            vk::ShaderStageFlagBits::eAll,
-            vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
-            vk::ShaderStageFlagBits::eAll },
-        { 1, 1, noiseFrameBuffersCount, 3 });
 
-    // make pipelines
-    pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
-    terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
-        "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
-        vk::PrimitiveTopology::ePatchList, true, false, {}, {});
+    // hdr stage
+    {
+        // make multisampling buffer
+        const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(2);
+        const vk::Format hdrFormat = vk::Format::eR16G16B16A16Sfloat;
+        multiSampleImage = context.makeMultiSampleImage(hdrFormat, properties.extent, 1, sampleCount);
 
-    atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
-        "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
-        vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
+        // make depth buffer
+        depthImage = context.makeDepthImage(properties.extent, sampleCount);
 
-    numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 2, sampleCount,
-        "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
-        vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
+        // make hdr float buffer
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            hdrImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
+        }
 
-    // make command buffers
-    commandBuffers = context.allocateCommandBuffers(properties.imageCount);
+        // make render pass
+        hdrRenderPass = context.makeRenderPass(sampleCount, hdrFormat, { true, true, false }, depthImage.format, true);
 
-    // make framebuffers
-    for (auto const& swapchainImageView : swapchainImageViews) {
-        framebuffers.push_back(context.makeFramebuffer(*swapchainImageView, *depthImage.view,
-            *multiSampleImage.view, *renderPass, properties.extent));
+        // make descriptor sets
+        descriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eUniformBuffer,
+                vk::DescriptorType::eUniformBuffer,
+                vk::DescriptorType::eCombinedImageSampler,
+                vk::DescriptorType::eUniformBuffer },
+            { vk::ShaderStageFlagBits::eAll,
+                vk::ShaderStageFlagBits::eAll,
+                vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment,
+                vk::ShaderStageFlagBits::eAll },
+            { 1, 1, noiseFrameBuffersCount, 3 });
+
+        // make pipelines
+        pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
+        terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 0, sampleCount,
+            "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
+            vk::PrimitiveTopology::ePatchList, true, false, {}, {});
+
+        atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 1, sampleCount,
+            "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
+
+        numbersPipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 2, sampleCount,
+            "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
+
+        // make hdr framebuffers
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            hdrFramebuffers.push_back(context.makeFramebuffer(*hdrImages[i].view, *depthImage.view, *multiSampleImage.view,
+                *hdrRenderPass, properties.extent));
+        }
     }
 
-    // make offscreen render target
-    const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
-    const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
-    const std::uint32_t noiseLayersCount = 2;
+    // present stage
+    {
+        renderPass = context.makeRenderPass(vk::SampleCountFlagBits::e1, properties.surfaceFormat.format,
+            { false }, vk::Format::eUndefined, false);
 
-    for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-        ImageObject image = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
-            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
-            vk::ImageAspectFlagBits::eColor);
+        bloomDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eCombinedImageSampler },
+            { vk::ShaderStageFlagBits::eFragment },
+            { 1 });
 
-        transitionImageLayout(*context.beginSingleTimeCommands(), *image.image, image.layerCount,
-            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal, image.mipLevels);
+        bloomPipelineLayout = context.makePipelineLayout(*bloomDescriptorSet.layout);
+        bloomPipeline = context.makePipeline(*bloomPipelineLayout, properties.extent, *renderPass, 0, vk::SampleCountFlagBits::e1,
+            "shaders/bloom.vert.spv", "shaders/bloom.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
 
-        noiseImages.push_back(std::move(image));
+        // make framebuffers
+        for (auto const& swapchainImageView : swapchainImageViews) {
+            framebuffers.push_back(context.makeFramebuffer(*swapchainImageView, nullptr, nullptr, *renderPass, properties.extent));
+        }
+
+        // make present command buffers
+        commandBuffers = context.allocateCommandBuffers(properties.imageCount);
     }
 
-    // Host accessible scratch buffer
-    terrain = context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eTransferDst,
-        static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 16 * noiseLayersCount));
+    // terrain construct stage
+    {
+        // make offscreen render target
+        const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
+        const vk::Format noiseImageFormat = vk::Format::eR16G16B16A16Sfloat;
+        const std::uint32_t noiseLayersCount = 2;
 
-    noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
-        { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
-        { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
-        { 1, 1 });
+        for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
+            ImageObject image = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
+                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+                vk::ImageAspectFlagBits::eColor);
 
-    noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
-    noisePipeline = context.makeComputePipeline(*noisePipelineLayout, "shaders/noise.comp.spv");
+            transitionImageLayout(*context.beginSingleTimeCommands(), *image.image, image.layerCount,
+                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal, image.mipLevels);
 
-    noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
+            noiseImages.push_back(std::move(image));
+        }
+
+        // Host accessible scratch buffer
+        terrain = context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eTransferDst,
+            static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 8 * noiseLayersCount));
+
+        noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
+            { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
+            { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
+            { 1, 1 });
+
+        noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
+        noisePipeline = context.makeComputePipeline(*noisePipelineLayout, "shaders/noise.comp.spv");
+
+        noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
+    }
 }
 
 VulkanApplication::VulkanApplication()
@@ -292,11 +325,10 @@ void VulkanApplication::recordDrawCommands()
 
     // record main rendering
     {
-        std::size_t index = 0;
-        for (vk::UniqueCommandBuffer const& commandBuffer : m_swapchain.commandBuffers) {
+        for (std::size_t index = 0; index < m_swapchainProps.imageCount; ++index) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 5> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
@@ -322,21 +354,21 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[1].descriptorCount = 1;
             descriptorWrites[1].pBufferInfo = &mapBoundsUniformBufferInfo;
 
-            std::vector<vk::DescriptorImageInfo> imageInfos{};
+            std::vector<vk::DescriptorImageInfo> noiseImageInfos{};
             for (auto const& image : m_swapchain.noiseImages) {
                 vk::DescriptorImageInfo imageInfo;
                 imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
                 imageInfo.imageView = *image.view;
                 imageInfo.sampler = *m_sampler;
-                imageInfos.push_back(imageInfo);
+                noiseImageInfos.push_back(imageInfo);
             }
 
             descriptorWrites[2].dstSet = m_swapchain.descriptorSet.sets[index];
             descriptorWrites[2].dstBinding = 2;
             descriptorWrites[2].dstArrayElement = 0;
             descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[2].descriptorCount = static_cast<std::uint32_t>(imageInfos.size());
-            descriptorWrites[2].pImageInfo = imageInfos.data();
+            descriptorWrites[2].descriptorCount = static_cast<std::uint32_t>(noiseImageInfos.size());
+            descriptorWrites[2].pImageInfo = noiseImageInfos.data();
 
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
@@ -353,6 +385,18 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[3].descriptorCount = static_cast<std::uint32_t>(numBufInfos.size());
             descriptorWrites[3].pBufferInfo = numBufInfos.data();
 
+            vk::DescriptorImageInfo hdrImageInfo{};
+            hdrImageInfo.imageLayout = vk::ImageLayout::ePresentSrcKHR;
+            hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
+            hdrImageInfo.sampler = *m_sampler;
+
+            descriptorWrites[4].dstSet = m_swapchain.bloomDescriptorSet.sets[index];
+            descriptorWrites[4].dstBinding = 0;
+            descriptorWrites[4].dstArrayElement = 0;
+            descriptorWrites[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[4].descriptorCount = 1;
+            descriptorWrites[4].pImageInfo = &hdrImageInfo;
+
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
             // begin recording
@@ -360,39 +404,58 @@ void VulkanApplication::recordDrawCommands()
             beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
             beginInfo.pInheritanceInfo = nullptr;
 
-            commandBuffer->begin(beginInfo);
+            vk::CommandBuffer commandBuffer = *m_swapchain.commandBuffers[index];
+            commandBuffer.begin(beginInfo);
 
-            vk::RenderPassBeginInfo renderPassInfo{};
-            renderPassInfo.renderPass = *m_swapchain.renderPass;
-            renderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
-            renderPassInfo.renderArea.offset.x = 0;
-            renderPassInfo.renderArea.offset.y = 0;
-            renderPassInfo.renderArea.extent = m_swapchainProps.extent;
-            renderPassInfo.clearValueCount = clearValues.size();
-            renderPassInfo.pClearValues = clearValues.data();
+            vk::RenderPassBeginInfo mainRenderPassInfo{};
+            mainRenderPassInfo.renderPass = *m_swapchain.hdrRenderPass;
+            mainRenderPassInfo.framebuffer = *m_swapchain.hdrFramebuffers[index];
+            mainRenderPassInfo.renderArea.offset.x = 0;
+            mainRenderPassInfo.renderArea.offset.y = 0;
+            mainRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+            mainRenderPassInfo.clearValueCount = clearValues.size();
+            mainRenderPassInfo.pClearValues = clearValues.data();
 
-            commandBuffer->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+            commandBuffer.beginRenderPass(mainRenderPassInfo, vk::SubpassContents::eInline);
             {
-                commandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
                     { m_swapchain.descriptorSet.sets[index] }, {});
 
-                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
                 auto vertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
-                commandBuffer->draw(vertexCount, 1, 0, 0);
+                commandBuffer.draw(vertexCount, 1, 0, 0);
 
-                commandBuffer->nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
-                commandBuffer->draw(4, 1, 0, 0);
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
+                commandBuffer.draw(4, 1, 0, 0);
 
-                commandBuffer->nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
-                commandBuffer->draw(4, 1, 0, 0);
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
+                commandBuffer.draw(4, 1, 0, 0);
             }
-            commandBuffer->endRenderPass();
+            commandBuffer.endRenderPass();
 
-            commandBuffer->end();
+            // bloom shader rendering
+            vk::RenderPassBeginInfo bloomRenderPassInfo{};
+            bloomRenderPassInfo.renderPass = *m_swapchain.renderPass;
+            bloomRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
+            bloomRenderPassInfo.renderArea.offset.x = 0;
+            bloomRenderPassInfo.renderArea.offset.y = 0;
+            bloomRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+            bloomRenderPassInfo.clearValueCount = clearValues.size();
+            bloomRenderPassInfo.pClearValues = clearValues.data();
 
-            index++;
+            commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
+            {
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipelineLayout, 0,
+                    { m_swapchain.bloomDescriptorSet.sets[index] }, {});
+
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomPipeline);
+                commandBuffer.draw(4, 1, 0, 0);
+            }
+            commandBuffer.endRenderPass();
+
+            commandBuffer.end();
         }
     }
 }
@@ -438,7 +501,7 @@ void VulkanApplication::drawFrame()
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
 
-        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, 0, 0)), 0);
+        ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1, -1, 0)), 0);
 
         std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
@@ -575,9 +638,9 @@ void VulkanApplication::run()
 
     m_planetRotateAngle = 0.0f;
 
-    m_eyePosition = glm::vec3(0.0f, 0.0f, 3.0f);
-    m_lookDirection = glm::vec3(0.0f, 0.0f, -1.0f);
-    m_upDirection = glm::vec3(1.0f, 0.0f, 0.0f);
+    m_eyePosition = glm::vec3(0.0f, -3.0f, 0.0f);
+    m_lookDirection = glm::vec3(0.0f, 1.0f, 0.0f);
+    m_upDirection = glm::vec3(0.0f, 0.0f, 1.0f);
     m_movingForward = m_movingBackward = m_rotatingLeft = m_rotatingRight = false;
 
     m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
@@ -654,9 +717,9 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
+    //m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
 
-    const float r = 0.1f;
+    const float r = 1 - std::exp(-dt * 10.0f);
     glm::vec2 smoothDelta{};
     if (std::isfinite(m_lastCursorPos.x)) {
         smoothDelta = r * m_deltaCursorPos;

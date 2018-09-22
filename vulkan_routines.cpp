@@ -865,7 +865,7 @@ ou::ImageObject ou::GraphicsContext::makeMultiSampleImage(vk::Format imageFormat
 }
 
 vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits sampleCount,
-    vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat) const
+    vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat, bool useMSAA) const
 {
     std::vector<vk::AttachmentDescription> attachments;
 
@@ -878,7 +878,7 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
     colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
     colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
-    colorAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorAttachment.finalLayout = useMSAA ? vk::ImageLayout::eColorAttachmentOptimal : vk::ImageLayout::ePresentSrcKHR;
     attachments.push_back(colorAttachment);
 
     // depth attachment
@@ -896,16 +896,18 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
     }
 
     // multisample resolve attachment
-    vk::AttachmentDescription multiSampleAttachment;
-    multiSampleAttachment.format = imageFormat;
-    multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
-    multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-    multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-    multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-    multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
-    multiSampleAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
-    attachments.push_back(multiSampleAttachment);
+    if (useMSAA) {
+        vk::AttachmentDescription multiSampleAttachment;
+        multiSampleAttachment.format = imageFormat;
+        multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
+        multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        multiSampleAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+        attachments.push_back(multiSampleAttachment);
+    }
 
     std::array<vk::AttachmentReference, 1> colorAttachmentRefs{};
     // layout(location = 0) out vec4 outColor
@@ -928,7 +930,7 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(vk::SampleCountFlagBits
         subpasses[i].colorAttachmentCount = colorAttachmentRefs.size();
         subpasses[i].pColorAttachments = colorAttachmentRefs.data();
         subpasses[i].pDepthStencilAttachment = useDepth[i] ? &depthAttachmentRef : nullptr;
-        subpasses[i].pResolveAttachments = &multiSampleResolveRef;
+        subpasses[i].pResolveAttachments = useMSAA ? &multiSampleResolveRef : nullptr;
 
         if (i > 0) {
             vk::SubpassDependency dependency{};
@@ -979,7 +981,7 @@ static std::vector<char> readFile(const char* fileName)
     std::ifstream file(fileName, std::ios::ate | std::ios::binary);
 
     if (!file.is_open()) {
-        throw std::runtime_error("filed to open file");
+        throw std::runtime_error("failed to open file");
     }
 
     std::size_t fileSize = static_cast<std::size_t>(file.tellg());

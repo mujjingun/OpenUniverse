@@ -1,4 +1,4 @@
-#version 450
+#version 440
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
@@ -60,11 +60,11 @@ const float r = 0.002f;
 
 // returns unnormalized normal
 vec3 getNormal(vec3 coords, float noise, vec2 grad) {
-    vec2 sphere = vec2(acos(coords.z), atan(coords.y, coords.x));
-    vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
-    vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
-    vec3 dndt = r * grad.x * coords + dgdt * (1 + r * noise);
-    vec3 dndp = r * grad.y * coords + dgdp * (1 + r * noise);
+    const vec2 sphere = vec2(acos(coords.z), atan(coords.y, coords.x));
+    const vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
+    const vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
+    const vec3 dndt = r * grad.x * coords + dgdt * (1 + r * noise);
+    const vec3 dndp = r * grad.y * coords + dgdp * (1 + r * noise);
     return cross(dndt, dndp);
 }
 
@@ -109,7 +109,7 @@ void main() {
 
     // biome
     float biome = noiseTex.w;
-    vec3 biomeColor = mix(vec3(61, 82, 48) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
+    vec3 biomeColor = mix(vec3(41, 62, 28) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
 
     // ocean
     vec3 sandColor = vec3(236, 221, 166) / 256.0f;
@@ -127,7 +127,7 @@ void main() {
     vec3 worldPos = mat3(ubo.model) * modelPos;
 
     normal = mix(flatNormal, normal, oceanOrTerrain);
-    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) + 0.05f;
+    float light = max(0.0f, dot(ubo.lightDir.xyz, normal)) * 5.0f + 0.001f;
 
     vec3 lightReflect = normalize(reflect(ubo.lightDir.xyz, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);

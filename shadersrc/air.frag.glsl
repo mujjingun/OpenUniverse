@@ -1,4 +1,4 @@
-#version 450
+#version 440
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
@@ -119,7 +119,7 @@ void main() {
         const vec3 modelPos = cartCoords;
         const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
         const vec3 normal = normalize(worldPos);
-        const float light = max(0.0, dot(ubo.lightDir.xyz, normal));
+        const float light = max(0.0, dot(ubo.lightDir.xyz, normal)) * 5.0f + 0.001f;
 
         vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
         float cosine = dot(vertexToEye, normal);

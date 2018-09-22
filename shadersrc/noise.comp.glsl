@@ -1,4 +1,4 @@
-#version 450
+#version 440
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
@@ -185,7 +185,7 @@ void main()
 
     // temperature
     const vec3 seed_4 = cartesian * 2 + vec3(-5.0f);
-    const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 15.0f - max(noise_1, 0) * 3.0f
+    const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 10.0f - max(noise_1, 0) * 3.0f
             + snoise(seed_4) * 2.0f
             + snoise(seed_4 * 2) * 1.0f;
 

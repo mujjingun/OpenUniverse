@@ -129,7 +129,7 @@ public:
         vk::SampleCountFlagBits sampleCount) const;
 
     vk::UniqueRenderPass makeRenderPass(vk::SampleCountFlagBits sampleCount,
-        vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat) const;
+        vk::Format imageFormat, std::deque<bool> const& useDepth, vk::Format depthFormat, bool useMSAA) const;
 
     vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
 
