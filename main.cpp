@@ -208,31 +208,23 @@ void VulkanApplication::recordDrawCommands()
         for (std::size_t index = 0; index < m_swapchainProps.imageCount; ++index) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
+            std::vector<vk::WriteDescriptorSet> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
             bufferInfo.offset = 0;
             bufferInfo.range = VK_WHOLE_SIZE;
 
-            descriptorWrites[0].dstSet = m_swapchain.descriptorSet.sets[index];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &bufferInfo;
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.descriptorSet.sets[index], 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &bufferInfo));
 
             vk::DescriptorBufferInfo mapBoundsUniformBufferInfo{};
             mapBoundsUniformBufferInfo.buffer = *m_renderMapBoundsUniformBuffers[index].buffer;
             mapBoundsUniformBufferInfo.offset = 0;
             mapBoundsUniformBufferInfo.range = VK_WHOLE_SIZE;
 
-            descriptorWrites[1].dstSet = m_swapchain.descriptorSet.sets[index];
-            descriptorWrites[1].dstBinding = 1;
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = vk::DescriptorType::eUniformBuffer;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pBufferInfo = &mapBoundsUniformBufferInfo;
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.descriptorSet.sets[index], 1, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &mapBoundsUniformBufferInfo));
 
             std::vector<vk::DescriptorImageInfo> noiseImageInfos{};
             for (auto const& image : m_swapchain.noiseImages) {
@@ -243,12 +235,10 @@ void VulkanApplication::recordDrawCommands()
                 noiseImageInfos.push_back(imageInfo);
             }
 
-            descriptorWrites[2].dstSet = m_swapchain.descriptorSet.sets[index];
-            descriptorWrites[2].dstBinding = 2;
-            descriptorWrites[2].dstArrayElement = 0;
-            descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[2].descriptorCount = static_cast<std::uint32_t>(noiseImageInfos.size());
-            descriptorWrites[2].pImageInfo = noiseImageInfos.data();
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.descriptorSet.sets[index], 2, 0,
+                static_cast<std::uint32_t>(noiseImageInfos.size()),
+                vk::DescriptorType::eCombinedImageSampler, noiseImageInfos.data()));
 
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
@@ -258,48 +248,42 @@ void VulkanApplication::recordDrawCommands()
                 bufInfo.range = VK_WHOLE_SIZE;
                 numBufInfos.push_back(bufInfo);
             }
-            descriptorWrites[3].dstSet = m_swapchain.numbersDescriptorSet.sets[index];
-            descriptorWrites[3].dstBinding = 0;
-            descriptorWrites[3].dstArrayElement = 0;
-            descriptorWrites[3].descriptorType = vk::DescriptorType::eUniformBuffer;
-            descriptorWrites[3].descriptorCount = static_cast<std::uint32_t>(numBufInfos.size());
-            descriptorWrites[3].pBufferInfo = numBufInfos.data();
 
-            vk::DescriptorImageInfo scaledHdrImageInfo{};
-            scaledHdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            scaledHdrImageInfo.imageView = *m_swapchain.scaledHdrImages[index].view;
-            scaledHdrImageInfo.sampler = *m_sampler;
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.numbersDescriptorSet.sets[index], 0, 0,
+                static_cast<std::uint32_t>(noiseImageInfos.size()),
+                vk::DescriptorType::eUniformBuffer, nullptr, numBufInfos.data()));
 
-            descriptorWrites[4].dstSet = m_swapchain.bloomHDescriptorSet.sets[index];
-            descriptorWrites[4].dstBinding = 0;
-            descriptorWrites[4].dstArrayElement = 0;
-            descriptorWrites[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[4].descriptorCount = 1;
-            descriptorWrites[4].pImageInfo = &scaledHdrImageInfo;
+            std::vector<vk::DescriptorImageInfo> scaledHdrImageInfos{bloomCount};
+            for (std::uint32_t b = 0; b < bloomCount; ++b) {
+                scaledHdrImageInfos[b].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                scaledHdrImageInfos[b].imageView = *m_swapchain.scaledHdrImages[b][index].view;
+                scaledHdrImageInfos[b].sampler = *m_sampler;
 
-            vk::DescriptorImageInfo bloomImageInfo{};
-            bloomImageInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-            bloomImageInfo.imageView = *m_swapchain.bloomImages[index].view;
-            bloomImageInfo.sampler = *m_sampler;
+                descriptorWrites.push_back(vk::WriteDescriptorSet(
+                    m_swapchain.bloomHDescriptorSet[b].sets[index], 0, 0,
+                    1, vk::DescriptorType::eCombinedImageSampler, &scaledHdrImageInfos[b]));
+            }
 
-            descriptorWrites[5].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
-            descriptorWrites[5].dstBinding = 0;
-            descriptorWrites[5].dstArrayElement = 0;
-            descriptorWrites[5].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[5].descriptorCount = 1;
-            descriptorWrites[5].pImageInfo = &bloomImageInfo;
+            std::vector<vk::DescriptorImageInfo> bloomImageInfos{bloomCount};
+            for (std::uint32_t b = 0; b < bloomCount; ++b) {
+                bloomImageInfos[b].imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+                bloomImageInfos[b].imageView = *m_swapchain.bloomImages[b][index].view;
+                bloomImageInfos[b].sampler = *m_sampler;
+
+                descriptorWrites.push_back(vk::WriteDescriptorSet(
+                    m_swapchain.sceneDescriptorSet.sets[index], 0, b,
+                    1, vk::DescriptorType::eCombinedImageSampler, &bloomImageInfos[b]));
+            }
 
             vk::DescriptorImageInfo hdrImageInfo{};
             hdrImageInfo.imageLayout = vk::ImageLayout::eTransferSrcOptimal;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
-            descriptorWrites[6].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
-            descriptorWrites[6].dstBinding = 1;
-            descriptorWrites[6].dstArrayElement = 0;
-            descriptorWrites[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[6].descriptorCount = 1;
-            descriptorWrites[6].pImageInfo = &hdrImageInfo;
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.sceneDescriptorSet.sets[index], 1, 0,
+                1, vk::DescriptorType::eCombinedImageSampler, &hdrImageInfo));
 
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
@@ -331,17 +315,13 @@ void VulkanApplication::recordDrawCommands()
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
-                commandBuffer.draw(4, 1, 0, 0);
+                commandBuffer.draw(3, 1, 0, 0);
             }
             commandBuffer.endRenderPass();
 
             // blit image
             {
                 ImageObject const& srcImage = m_swapchain.hdrImages[index];
-                ImageObject const& dstImage = m_swapchain.scaledHdrImages[index];
-
-                transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
 
                 vk::ImageBlit blit{};
                 blit.srcOffsets[0].x = 0;
@@ -358,38 +338,49 @@ void VulkanApplication::recordDrawCommands()
                 blit.dstOffsets[0].x = 0;
                 blit.dstOffsets[0].y = 0;
                 blit.dstOffsets[0].z = 0;
-                blit.dstOffsets[1].x = static_cast<std::int32_t>(dstImage.extent.width);
-                blit.dstOffsets[1].y = static_cast<std::int32_t>(dstImage.extent.height);
                 blit.dstOffsets[1].z = 1;
                 blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
                 blit.dstSubresource.mipLevel = 0;
                 blit.dstSubresource.baseArrayLayer = 0;
                 blit.dstSubresource.layerCount = 1;
 
-                commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
-                    *dstImage.image, vk::ImageLayout::eTransferDstOptimal, { blit }, vk::Filter::eLinear);
+                for (std::uint32_t b = 0; b < bloomCount; ++b) {
+                    ImageObject const& dstImage = m_swapchain.scaledHdrImages[b][index];
 
-                transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
+                    transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
+
+                    blit.dstOffsets[1].x = static_cast<std::int32_t>(dstImage.extent.width);
+                    blit.dstOffsets[1].y = static_cast<std::int32_t>(dstImage.extent.height);
+
+                    commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
+                        *dstImage.image, vk::ImageLayout::eTransferDstOptimal, { blit }, vk::Filter::eLinear);
+
+                    transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
+                }
             }
 
             vk::RenderPassBeginInfo bloomRenderPassInfo{};
             bloomRenderPassInfo.renderPass = *m_swapchain.bloomRenderPass;
-            bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[index];
             bloomRenderPassInfo.renderArea.offset.x = 0;
             bloomRenderPassInfo.renderArea.offset.y = 0;
-            bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[index].extent;
             bloomRenderPassInfo.clearValueCount = clearValues.size();
             bloomRenderPassInfo.pClearValues = clearValues.data();
 
-            commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
-            {
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
-                    { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
-                commandBuffer.draw(4, 1, 0, 0);
+            for (std::uint32_t b = 0; b < bloomCount; ++b) {
+                bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[b][index];
+                bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[b][index].extent;
+
+                commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
+                {
+                    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout[b], 0,
+                        { m_swapchain.bloomHDescriptorSet[b].sets[index] }, {});
+                    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline[b]);
+                    commandBuffer.draw(3, 1, 0, 0);
+                }
+                commandBuffer.endRenderPass();
             }
-            commandBuffer.endRenderPass();
 
             vk::RenderPassBeginInfo presentRenderPassInfo{};
             presentRenderPassInfo.renderPass = *m_swapchain.presentRenderPass;
@@ -405,13 +396,13 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipelineLayout, 0,
                     { m_swapchain.sceneDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipeline);
-                commandBuffer.draw(4, 1, 0, 0);
+                commandBuffer.draw(3, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipelineLayout, 0,
                     { m_swapchain.numbersDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
-                commandBuffer.draw(4, 1, 0, 0);
+                commandBuffer.draw(3, 1, 0, 0);
             }
             commandBuffer.endRenderPass();
 

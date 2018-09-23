@@ -127,7 +127,7 @@ void main() {
 
     normal = mix(flatNormal, normal, oceanOrTerrain);
     vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-    float light = max(0.0f, dot(lightDir, normal)) * lightIntensity + 0.001f;
+    float light = max(0.001f, dot(lightDir, normal)) * lightIntensity;
 
     vec3 lightReflect = normalize(reflect(lightDir, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);

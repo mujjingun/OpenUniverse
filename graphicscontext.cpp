@@ -955,6 +955,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile, const char* geometryShaderFile,
     vk::PrimitiveTopology primitiveType,
+    vk::CullModeFlags cullMode,
     bool enableBlending, bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const
@@ -1046,7 +1047,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
 
-    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.cullMode = cullMode;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f;

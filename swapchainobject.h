@@ -7,6 +7,8 @@
 
 namespace ou {
 
+const std::size_t bloomCount = 3;
+
 // set of elements that need to be recreated when the window gets resized
 struct SwapchainObject {
     vk::UniqueSwapchainKHR swapchain;
@@ -17,8 +19,9 @@ struct SwapchainObject {
     ImageObject multiSampleImage;
     ImageObject depthImage;
     std::vector<ImageObject> hdrImages{};
-    std::vector<ImageObject> scaledHdrImages{};
-    std::vector<ImageObject> bloomImages{};
+    std::vector<ImageObject> colorImages{};
+    std::vector<std::vector<ImageObject>> scaledHdrImages{bloomCount};
+    std::vector<std::vector<ImageObject>> bloomImages{bloomCount};
 
     vk::UniqueRenderPass hdrRenderPass;
 
@@ -29,18 +32,19 @@ struct SwapchainObject {
     vk::UniquePipeline atmospherePipeline;
 
     std::vector<vk::UniqueFramebuffer> framebuffers{};
+    std::vector<std::vector<vk::UniqueFramebuffer>> bloomFramebuffers{bloomCount};
 
     // present & bloom shader
     vk::UniqueRenderPass presentRenderPass;
     vk::UniqueRenderPass bloomRenderPass;
 
-    DescriptorSetObject bloomHDescriptorSet;
+    std::vector<DescriptorSetObject> bloomHDescriptorSet{bloomCount};
 
     DescriptorSetObject sceneDescriptorSet;
     DescriptorSetObject numbersDescriptorSet;
 
-    vk::UniquePipelineLayout bloomHPipelineLayout;
-    vk::UniquePipeline bloomHPipeline;
+    std::vector<vk::UniquePipelineLayout> bloomHPipelineLayout{bloomCount};
+    std::vector<vk::UniquePipeline> bloomHPipeline{bloomCount};
 
     vk::UniquePipelineLayout scenePipelineLayout;
     vk::UniquePipeline scenePipeline;
@@ -48,7 +52,6 @@ struct SwapchainObject {
     vk::UniquePipelineLayout numbersPipelineLayout;
     vk::UniquePipeline numbersPipeline;
 
-    std::vector<vk::UniqueFramebuffer> bloomFramebuffers{};
     std::vector<vk::UniqueFramebuffer> presentFramebuffers{};
 
     std::vector<vk::UniqueCommandBuffer> commandBuffers{};
