@@ -31,3 +31,6 @@ compile_shader(bloomh.frag.glsl ../shaders/bloomh.frag.spv)
 
 compile_shader(bloomv.vert.glsl ../shaders/bloomv.vert.spv)
 compile_shader(bloomv.frag.glsl ../shaders/bloomv.frag.spv)
+
+compile_shader(scene.vert.glsl ../shaders/scene.vert.spv)
+compile_shader(scene.frag.glsl ../shaders/scene.frag.spv)

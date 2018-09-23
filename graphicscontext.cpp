@@ -1,4 +1,4 @@
-#include "vulkan_routines.h"
+#include "graphicscontext.h"
 
 #include <bitset>
 #include <fstream>
@@ -761,7 +761,7 @@ ou::SingleTimeCommandBuffer ou::GraphicsContext::beginSingleTimeCommands() const
 }
 
 void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, std::uint32_t layerCount,
-    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels)
+    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, std::uint32_t mipLevels, std::uint32_t baseMipLevel)
 {
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = oldLayout;
@@ -777,7 +777,7 @@ void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, st
         barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     }
 
-    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.baseMipLevel = baseMipLevel;
     barrier.subresourceRange.levelCount = mipLevels;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = layerCount;
@@ -791,12 +791,36 @@ void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, st
 
         sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
         destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
     } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
         barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
         barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
         sourceStage = vk::PipelineStageFlagBits::eTransfer;
         destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else if (oldLayout == vk::ImageLayout::eTransferSrcOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else if (oldLayout == vk::ImageLayout::eTransferSrcOptimal && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+        barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    } else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eShaderRead;
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eFragmentShader;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
     } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
         barrier.srcAccessMask = {};
         barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead
@@ -1379,9 +1403,9 @@ vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoord
 
     samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
 
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToBorder;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToBorder;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToBorder;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
 
     if (unnormalizedCoordinates) {
         samplerInfo.unnormalizedCoordinates = true;

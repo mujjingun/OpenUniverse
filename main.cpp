@@ -15,7 +15,6 @@ namespace ou {
 
 static const std::size_t maxFramesInFlight = 2;
 static const std::uint64_t timeOut = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(1)).count();
-static const std::uint32_t maxSampleCount = 2;
 
 struct Vertex {
     glm::vec3 pos;
@@ -65,311 +64,6 @@ struct UniformBufferObject {
     std::uint32_t readyNoiseImageIndex;
 };
 
-SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
-{
-    // make swapchain
-    swapchain = context.makeSwapchain(properties, oldSwapchain);
-    swapchainImages = context.retrieveSwapchainImages(*swapchain);
-    for (const auto& image : swapchainImages) {
-        swapchainImageViews.push_back(context.makeImageView(image, properties.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
-    }
-
-    const std::size_t noiseFrameBuffersCount = 3;
-
-    // hdr stage
-    {
-        // make multisampling buffer
-        const vk::SampleCountFlagBits sampleCount = context.getMaxUsableSampleCount(maxSampleCount);
-        const vk::Format hdrFormat = vk::Format::eR16G16B16A16Sfloat;
-        multiSampleImage = context.makeMultiSampleImage(hdrFormat, properties.extent, 1, sampleCount);
-
-        // make depth buffer
-        depthImage = context.makeDepthImage(properties.extent, sampleCount);
-
-        // make hdr float buffer
-        for (std::size_t i = 0; i < properties.imageCount; ++i) {
-            hdrImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
-                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
-            bloomImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
-                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor));
-        }
-
-        // make render pass
-        std::vector<vk::SubpassDescription> subpasses;
-
-        vk::AttachmentReference hdrAttachmentRef;
-        hdrAttachmentRef.attachment = 0;
-        hdrAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-        vk::AttachmentReference depthAttachmentRef;
-        depthAttachmentRef.attachment = 1;
-        depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-
-        vk::AttachmentReference multiSampleAttachmentRef;
-        multiSampleAttachmentRef.attachment = 2;
-        multiSampleAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-        vk::AttachmentReference bloomAttachmentRef;
-        bloomAttachmentRef.attachment = 3;
-        bloomAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-        vk::AttachmentReference presentAttachmentRef;
-        presentAttachmentRef.attachment = 4;
-        presentAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
-
-        vk::SubpassDescription terrainSubpass;
-        terrainSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        terrainSubpass.colorAttachmentCount = 1;
-        terrainSubpass.pColorAttachments = &hdrAttachmentRef;
-        terrainSubpass.pDepthStencilAttachment = &depthAttachmentRef;
-        terrainSubpass.pResolveAttachments = &multiSampleAttachmentRef;
-        subpasses.push_back(terrainSubpass);
-
-        vk::SubpassDescription atmosphereSubpass;
-        atmosphereSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        atmosphereSubpass.colorAttachmentCount = 1;
-        atmosphereSubpass.pColorAttachments = &hdrAttachmentRef;
-        atmosphereSubpass.pDepthStencilAttachment = &depthAttachmentRef;
-        atmosphereSubpass.pResolveAttachments = &multiSampleAttachmentRef;
-        subpasses.push_back(atmosphereSubpass);
-
-        vk::SubpassDescription bloomSubpassH;
-        bloomSubpassH.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        bloomSubpassH.colorAttachmentCount = 1;
-        bloomSubpassH.pColorAttachments = &bloomAttachmentRef;
-        bloomSubpassH.pDepthStencilAttachment = nullptr;
-        bloomSubpassH.pResolveAttachments = nullptr;
-        subpasses.push_back(bloomSubpassH);
-
-        vk::SubpassDescription bloomSubpassV;
-        bloomSubpassV.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        bloomSubpassV.colorAttachmentCount = 1;
-        bloomSubpassV.pColorAttachments = &presentAttachmentRef;
-        bloomSubpassV.pDepthStencilAttachment = nullptr;
-        bloomSubpassV.pResolveAttachments = nullptr;
-        subpasses.push_back(bloomSubpassV);
-
-        vk::SubpassDescription numbersSubpass;
-        numbersSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        numbersSubpass.colorAttachmentCount = 1;
-        numbersSubpass.pColorAttachments = &presentAttachmentRef;
-        numbersSubpass.pDepthStencilAttachment = nullptr;
-        numbersSubpass.pResolveAttachments = nullptr;
-        subpasses.push_back(numbersSubpass);
-
-        // define dependencies
-        std::vector<vk::SubpassDependency> dependencies;
-
-        // terrain
-        vk::SubpassDependency terrainDependency;
-        terrainDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-        terrainDependency.dstSubpass = 0;
-        terrainDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        terrainDependency.srcAccessMask = {};
-        terrainDependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        terrainDependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
-        dependencies.push_back(terrainDependency);
-
-        // atmosphere
-        vk::SubpassDependency atmosphereDependency;
-        atmosphereDependency.srcSubpass = 0;
-        atmosphereDependency.dstSubpass = 1;
-        atmosphereDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-        atmosphereDependency.srcAccessMask = {};
-        atmosphereDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
-        atmosphereDependency.dstAccessMask = {};
-        dependencies.push_back(atmosphereDependency);
-
-        // bloom horizontal
-        vk::SubpassDependency bloomHDependency;
-        bloomHDependency.srcSubpass = 1;
-        bloomHDependency.dstSubpass = 2;
-        bloomHDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        bloomHDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-        bloomHDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
-        bloomHDependency.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-        dependencies.push_back(bloomHDependency);
-
-        // bloom vertical
-        vk::SubpassDependency bloomVDependency;
-        bloomVDependency.srcSubpass = 2;
-        bloomVDependency.dstSubpass = 3;
-        bloomVDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        bloomVDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-        bloomVDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
-        bloomVDependency.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-        dependencies.push_back(bloomVDependency);
-
-        // numbers
-        vk::SubpassDependency numbersDependency;
-        numbersDependency.srcSubpass = 3;
-        numbersDependency.dstSubpass = 4;
-        numbersDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-        numbersDependency.srcAccessMask = {};
-        numbersDependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
-        numbersDependency.dstAccessMask = {};
-        dependencies.push_back(numbersDependency);
-
-        // define attachments
-        std::vector<vk::AttachmentDescription> attachments;
-
-        // hdr color attachment
-        vk::AttachmentDescription hdrAttachment;
-        hdrAttachment.format = hdrFormat;
-        hdrAttachment.samples = sampleCount;
-        hdrAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-        hdrAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-        hdrAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        hdrAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        hdrAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        hdrAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        attachments.push_back(hdrAttachment);
-
-        // depth attachment
-        vk::AttachmentDescription depthAttachment;
-        depthAttachment.format = depthImage.format;
-        depthAttachment.samples = sampleCount;
-        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-        depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-        depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-        attachments.push_back(depthAttachment);
-
-        // multisample resolve attachment
-        vk::AttachmentDescription multiSampleAttachment;
-        multiSampleAttachment.format = multiSampleImage.format;
-        multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
-        multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        multiSampleAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-        multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        multiSampleAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        attachments.push_back(multiSampleAttachment);
-
-        // bloom color attachment
-        vk::AttachmentDescription bloomAttachment;
-        bloomAttachment.format = hdrFormat;
-        bloomAttachment.samples = vk::SampleCountFlagBits::e1;
-        bloomAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        bloomAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        bloomAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        bloomAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        bloomAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        bloomAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        attachments.push_back(bloomAttachment);
-
-        // present attachment
-        vk::AttachmentDescription presentAttachment;
-        presentAttachment.format = properties.surfaceFormat.format;
-        presentAttachment.samples = vk::SampleCountFlagBits::e1;
-        presentAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        presentAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        presentAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        presentAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        presentAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        presentAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
-        attachments.push_back(presentAttachment);
-
-        renderPass = context.makeRenderPass(subpasses, dependencies, attachments);
-
-        // make descriptor sets
-        descriptorSet = context.makeDescriptorSet(properties.imageCount,
-            { vk::DescriptorType::eUniformBuffer,
-                vk::DescriptorType::eUniformBuffer,
-                vk::DescriptorType::eCombinedImageSampler },
-            { vk::ShaderStageFlagBits::eAll,
-                vk::ShaderStageFlagBits::eAll,
-                vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
-            { 1, 1, noiseFrameBuffersCount });
-
-        // make pipelines
-        pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
-        terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 0, sampleCount,
-            "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
-            vk::PrimitiveTopology::ePatchList, true, false, {}, {});
-
-        atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *renderPass, 1, sampleCount,
-            "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
-
-        bloomHDescriptorSet = context.makeDescriptorSet(properties.imageCount,
-            { vk::DescriptorType::eCombinedImageSampler },
-            { vk::ShaderStageFlagBits::eFragment },
-            { 1 });
-
-        bloomVDescriptorSet = context.makeDescriptorSet(properties.imageCount,
-            { vk::DescriptorType::eCombinedImageSampler, vk::DescriptorType::eCombinedImageSampler },
-            { vk::ShaderStageFlagBits::eFragment, vk::ShaderStageFlagBits::eFragment },
-            { 1, 1 });
-
-        bloomHPipelineLayout = context.makePipelineLayout(*bloomHDescriptorSet.layout);
-        bloomHPipeline = context.makePipeline(*bloomHPipelineLayout, properties.extent, *renderPass, 2, vk::SampleCountFlagBits::e1,
-            "shaders/bloomh.vert.spv", "shaders/bloomh.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
-
-        bloomVPipelineLayout = context.makePipelineLayout(*bloomVDescriptorSet.layout);
-        bloomVPipeline = context.makePipeline(*bloomVPipelineLayout, properties.extent, *renderPass, 3, vk::SampleCountFlagBits::e1,
-            "shaders/bloomv.vert.spv", "shaders/bloomv.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, false, false, {}, {});
-
-        numbersDescriptorSet = context.makeDescriptorSet(properties.imageCount,
-            { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eFragment }, { 3 });
-
-        numbersPipelineLayout = context.makePipelineLayout(*numbersDescriptorSet.layout);
-        numbersPipeline = context.makePipeline(*numbersPipelineLayout, properties.extent, *renderPass, 4, vk::SampleCountFlagBits::e1,
-            "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, true, false, {}, {});
-
-        // make hdr framebuffers
-        for (std::size_t i = 0; i < properties.imageCount; ++i) {
-            framebuffers.push_back(context.makeFramebuffer(
-                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view, *bloomImages[i].view, *swapchainImageViews[i] },
-                *renderPass, properties.extent));
-        }
-
-        // make present command buffers
-        commandBuffers = context.allocateCommandBuffers(properties.imageCount);
-    }
-
-    // terrain construct stage
-    {
-        // make offscreen render target
-        const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
-        const vk::Format noiseImageFormat = vk::Format::eR16G16B16A16Sfloat;
-        const std::uint32_t noiseLayersCount = 2;
-
-        noiseFences = context.makeFences(noiseFrameBuffersCount, false);
-
-        for (std::size_t i = 0; i < noiseFrameBuffersCount; ++i) {
-            ImageObject image = context.makeImage(vk::SampleCountFlagBits::e1, 1, noiseImageExtent, noiseLayersCount, noiseImageFormat,
-                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
-                vk::ImageAspectFlagBits::eColor);
-
-            transitionImageLayout(*context.beginSingleTimeCommands(), *image.image, image.layerCount,
-                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal, image.mipLevels);
-
-            noiseImages.push_back(std::move(image));
-        }
-
-        // Host accessible scratch buffer
-        terrain = context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eTransferDst,
-            static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 8 * noiseLayersCount));
-
-        noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
-            { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
-            { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
-            { 1, 1 });
-
-        noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
-        noisePipeline = context.makeComputePipeline(*noisePipelineLayout, "shaders/noise.comp.spv");
-
-        noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);
-    }
-}
-
 VulkanApplication::VulkanApplication()
     : m_context(600, 480, false)
 
@@ -390,8 +84,8 @@ VulkanApplication::VulkanApplication()
     // make sampler
     , m_sampler(m_context.makeTextureSampler(false))
 
-    , m_parallelCount(200)
-    , m_meridianCount(200)
+    , m_parallelCount(100)
+    , m_meridianCount(100)
     , m_mapBounds(m_swapchain.noiseImages.size())
 {
     // make uniform buffers
@@ -444,18 +138,6 @@ void VulkanApplication::recordDrawCommands()
     // depth buffer clear value
     clearValues[1].depthStencil.depth = 1.0f;
     clearValues[1].depthStencil.stencil = 0;
-
-    // color buffer clear value
-    clearValues[2].color.float32[0] = 0.0f;
-    clearValues[2].color.float32[1] = 0.0f;
-    clearValues[2].color.float32[2] = 0.0f;
-    clearValues[2].color.float32[3] = 1.0f;
-
-    // color buffer clear value
-    clearValues[3].color.float32[0] = 0.0f;
-    clearValues[3].color.float32[1] = 0.0f;
-    clearValues[3].color.float32[2] = 0.0f;
-    clearValues[3].color.float32[3] = 1.0f;
 
     // record offscreen rendering
     {
@@ -526,7 +208,7 @@ void VulkanApplication::recordDrawCommands()
         for (std::size_t index = 0; index < m_swapchainProps.imageCount; ++index) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 8> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
@@ -583,17 +265,17 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[3].descriptorCount = static_cast<std::uint32_t>(numBufInfos.size());
             descriptorWrites[3].pBufferInfo = numBufInfos.data();
 
-            vk::DescriptorImageInfo hdrImageInfo{};
-            hdrImageInfo.imageLayout = vk::ImageLayout::eUndefined;
-            hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
-            hdrImageInfo.sampler = *m_sampler;
+            vk::DescriptorImageInfo scaledHdrImageInfo{};
+            scaledHdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            scaledHdrImageInfo.imageView = *m_swapchain.scaledHdrImages[index].view;
+            scaledHdrImageInfo.sampler = *m_sampler;
 
             descriptorWrites[4].dstSet = m_swapchain.bloomHDescriptorSet.sets[index];
             descriptorWrites[4].dstBinding = 0;
             descriptorWrites[4].dstArrayElement = 0;
             descriptorWrites[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             descriptorWrites[4].descriptorCount = 1;
-            descriptorWrites[4].pImageInfo = &hdrImageInfo;
+            descriptorWrites[4].pImageInfo = &scaledHdrImageInfo;
 
             vk::DescriptorImageInfo bloomImageInfo{};
             bloomImageInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -607,12 +289,24 @@ void VulkanApplication::recordDrawCommands()
             descriptorWrites[5].descriptorCount = 1;
             descriptorWrites[5].pImageInfo = &bloomImageInfo;
 
-            descriptorWrites[6].dstSet = m_swapchain.bloomVDescriptorSet.sets[index];
-            descriptorWrites[6].dstBinding = 1;
+            descriptorWrites[6].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
+            descriptorWrites[6].dstBinding = 0;
             descriptorWrites[6].dstArrayElement = 0;
             descriptorWrites[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             descriptorWrites[6].descriptorCount = 1;
-            descriptorWrites[6].pImageInfo = &hdrImageInfo;
+            descriptorWrites[6].pImageInfo = &scaledHdrImageInfo;
+
+            vk::DescriptorImageInfo hdrImageInfo{};
+            hdrImageInfo.imageLayout = vk::ImageLayout::eTransferSrcOptimal;
+            hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
+            hdrImageInfo.sampler = *m_sampler;
+
+            descriptorWrites[7].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
+            descriptorWrites[7].dstBinding = 1;
+            descriptorWrites[7].dstArrayElement = 0;
+            descriptorWrites[7].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[7].descriptorCount = 1;
+            descriptorWrites[7].pImageInfo = &hdrImageInfo;
 
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
@@ -625,7 +319,7 @@ void VulkanApplication::recordDrawCommands()
             commandBuffer.begin(beginInfo);
 
             vk::RenderPassBeginInfo mainRenderPassInfo{};
-            mainRenderPassInfo.renderPass = *m_swapchain.renderPass;
+            mainRenderPassInfo.renderPass = *m_swapchain.hdrRenderPass;
             mainRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
             mainRenderPassInfo.renderArea.offset.x = 0;
             mainRenderPassInfo.renderArea.offset.y = 0;
@@ -645,8 +339,59 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
                 commandBuffer.draw(4, 1, 0, 0);
+            }
+            commandBuffer.endRenderPass();
 
-                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+            // blit image
+            {
+                ImageObject const& srcImage = m_swapchain.hdrImages[index];
+                ImageObject const& dstImage = m_swapchain.scaledHdrImages[index];
+
+                transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                    vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal, 1);
+
+                vk::ImageBlit blit{};
+                blit.srcOffsets[0].x = 0;
+                blit.srcOffsets[0].y = 0;
+                blit.srcOffsets[0].z = 0;
+                blit.srcOffsets[1].x = static_cast<std::int32_t>(srcImage.extent.width);
+                blit.srcOffsets[1].y = static_cast<std::int32_t>(srcImage.extent.height);
+                blit.srcOffsets[1].z = 1;
+                blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.srcSubresource.mipLevel = 0;
+                blit.srcSubresource.baseArrayLayer = 0;
+                blit.srcSubresource.layerCount = 1;
+
+                blit.dstOffsets[0].x = 0;
+                blit.dstOffsets[0].y = 0;
+                blit.dstOffsets[0].z = 0;
+                blit.dstOffsets[1].x = static_cast<std::int32_t>(dstImage.extent.width);
+                blit.dstOffsets[1].y = static_cast<std::int32_t>(dstImage.extent.height);
+                blit.dstOffsets[1].z = 1;
+                blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.dstSubresource.mipLevel = 0;
+                blit.dstSubresource.baseArrayLayer = 0;
+                blit.dstSubresource.layerCount = 1;
+
+                commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
+                    *dstImage.image, vk::ImageLayout::eTransferDstOptimal,
+                    { blit }, vk::Filter::eLinear);
+
+                transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
+            }
+
+            vk::RenderPassBeginInfo bloomRenderPassInfo{};
+            bloomRenderPassInfo.renderPass = *m_swapchain.bloomRenderPass;
+            bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[index];
+            bloomRenderPassInfo.renderArea.offset.x = 0;
+            bloomRenderPassInfo.renderArea.offset.y = 0;
+            bloomRenderPassInfo.renderArea.extent = m_swapchain.scaledHdrImages[index].extent;
+            bloomRenderPassInfo.clearValueCount = clearValues.size();
+            bloomRenderPassInfo.pClearValues = clearValues.data();
+
+            commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
+            {
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
                     { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
@@ -656,6 +401,24 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipelineLayout, 0,
                     { m_swapchain.bloomVDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipeline);
+                commandBuffer.draw(4, 1, 0, 0);
+            }
+            commandBuffer.endRenderPass();
+
+            vk::RenderPassBeginInfo presentRenderPassInfo{};
+            presentRenderPassInfo.renderPass = *m_swapchain.presentRenderPass;
+            presentRenderPassInfo.framebuffer = *m_swapchain.presentFramebuffers[index];
+            presentRenderPassInfo.renderArea.offset.x = 0;
+            presentRenderPassInfo.renderArea.offset.y = 0;
+            presentRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+            presentRenderPassInfo.clearValueCount = clearValues.size();
+            presentRenderPassInfo.pClearValues = clearValues.data();
+
+            commandBuffer.beginRenderPass(presentRenderPassInfo, vk::SubpassContents::eInline);
+            {
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipelineLayout, 0,
+                    { m_swapchain.sceneDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipeline);
                 commandBuffer.draw(4, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
@@ -710,7 +473,7 @@ void VulkanApplication::drawFrame()
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
 
-        ubo.lightPos = glm::vec4(glm::vec3(20, -20, 0), 0);
+        ubo.lightPos = glm::vec4(glm::vec3(200, -200, 0), 0);
 
         std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
@@ -1013,9 +776,15 @@ int main()
 {
     try {
         ou::VulkanApplication app;
-        app.run();
+        try {
+            app.run();
+        } catch (std::exception const& err) {
+            std::cerr << "Exception raised while running the program: " << err.what() << std::endl;
+            std::terminate();
+        }
     } catch (std::exception const& err) {
-        std::cerr << "Exception raised while running the program: " << err.what() << std::endl;
+        std::cerr << "Exception raised while setting up the program: " << err.what() << std::endl;
+        std::terminate();
     }
 
     return 0;

@@ -3,11 +3,12 @@ cmake_minimum_required(VERSION 3.10)
 project(OpenUniverse)
 add_executable(${PROJECT_NAME}
     main.cpp
-    vulkan_routines.cpp
+    graphicscontext.cpp
+    swapchainobject.cpp
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 11
+    CXX_STANDARD 14
     CXX_EXTENSIONS OFF
 )
 

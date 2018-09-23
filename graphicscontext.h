@@ -202,7 +202,7 @@ private:
 };
 
 void transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, std::uint32_t layerCount,
-    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels);
+    vk::ImageLayout oldLayout, vk::ImageLayout newLayout, std::uint32_t mipLevels, std::uint32_t baseMipLevel = 0);
 
 } // namespace ou
 

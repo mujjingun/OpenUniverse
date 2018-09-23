@@ -79,7 +79,6 @@ void main() {
     float dist = length(ubo.modelEyePos) - 1;
 
     outColor = vec4(0.0f);
-    gl_FragDepth = 0;
 
     // inside the atmosphere
     if (dist < thickness) {
@@ -141,9 +140,10 @@ void main() {
     }
 
     // the sun
-    int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, ubo.lightPos.xyz, 1.0, cartCoords);
+    int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, ubo.lightPos.xyz, 10.0, cartCoords);
     if (orientation > 0) {
         outColor += vec4(100.0, 100.0, 100.0, 1.0);
+        gl_FragDepth = 1.0f - 0.001f;
     }
 }
 
