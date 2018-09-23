@@ -35,16 +35,12 @@ struct SwapchainObject {
     vk::UniqueRenderPass bloomRenderPass;
 
     DescriptorSetObject bloomHDescriptorSet;
-    DescriptorSetObject bloomVDescriptorSet;
 
     DescriptorSetObject sceneDescriptorSet;
     DescriptorSetObject numbersDescriptorSet;
 
     vk::UniquePipelineLayout bloomHPipelineLayout;
     vk::UniquePipeline bloomHPipeline;
-
-    vk::UniquePipelineLayout bloomVPipelineLayout;
-    vk::UniquePipeline bloomVPipeline;
 
     vk::UniquePipelineLayout scenePipelineLayout;
     vk::UniquePipeline scenePipeline;

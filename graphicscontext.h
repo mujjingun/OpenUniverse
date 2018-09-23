@@ -31,6 +31,7 @@ vk::PhysicalDevice selectPhysicalDevice(vk::Instance instance);
 struct QueueFamilyIndices {
     std::uint32_t graphics;
     std::uint32_t presentation;
+    std::uint32_t compute;
 };
 
 QueueFamilyIndices selectQueueFamilyIndices(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface);
@@ -91,7 +92,7 @@ public:
     vk::Device device() const;
     GLFWwindow* window() const;
     vk::Queue graphicsQueue() const;
-    vk::Queue graphicsQueue2() const;
+    vk::Queue computeQueue() const;
     vk::Queue presentQueue() const;
     int refreshRate() const;
     vk::Extent2D screenResolution() const;
@@ -196,7 +197,7 @@ private:
 
     vk::UniqueDevice m_device;
 
-    vk::Queue m_graphicsQueue, m_graphicsQueue2, m_presentQueue;
+    vk::Queue m_graphicsQueue, m_computeQueue, m_presentQueue;
 
     vk::UniqueCommandPool m_commandPool;
 };

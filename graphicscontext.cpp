@@ -273,6 +273,17 @@ ou::QueueFamilyIndices ou::selectQueueFamilyIndices(vk::PhysicalDevice physicalD
 
     indices.presentation = static_cast<std::uint32_t>(presentFamilyIt - queueFamilies.begin());
 
+    auto computeFamilyIt = std::find_if(queueFamilies.begin(), queueFamilies.end(),
+        [&](vk::QueueFamilyProperties const& queueFamily) -> bool {
+            return queueFamily.queueCount > 0 && queueFamily.queueFlags & vk::QueueFlagBits::eCompute;
+        });
+
+    if (computeFamilyIt == queueFamilies.end()) {
+        throw std::runtime_error("no compute queue family found");
+    }
+
+    indices.compute = static_cast<std::uint32_t>(computeFamilyIt - queueFamilies.begin());
+
     return indices;
 }
 
@@ -310,27 +321,22 @@ vk::UniqueDevice ou::makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDe
     vk::DeviceQueueCreateInfo graphicsQueueCreateInfo{};
     graphicsQueueCreateInfo.queueFamilyIndex = queueFamilies.graphics;
 
-    std::array<float, 2> queuePriorities = { { 1.0f, 0.0f } };
-    graphicsQueueCreateInfo.queueCount = queuePriorities.size();
-    graphicsQueueCreateInfo.pQueuePriorities = queuePriorities.data();
-    queueCreateInfos.push_back(graphicsQueueCreateInfo);
+    std::set<std::uint32_t> uniqueQueueFamilies = { queueFamilies.graphics, queueFamilies.compute, queueFamilies.presentation };
 
-    if (queueFamilies.graphics != queueFamilies.presentation) {
-        vk::DeviceQueueCreateInfo presentQueueCreateInfo{};
-        presentQueueCreateInfo.queueFamilyIndex = queueFamilies.presentation;
+    for (std::uint32_t index : uniqueQueueFamilies) {
+        vk::DeviceQueueCreateInfo queueInfo{};
+        queueInfo.queueFamilyIndex = index;
 
-        float presentPriority = 1.0f;
-        presentQueueCreateInfo.queueCount = 1;
-        presentQueueCreateInfo.pQueuePriorities = &presentPriority;
-        queueCreateInfos.push_back(presentQueueCreateInfo);
+        float priority = 1.0f;
+        queueInfo.queueCount = 1;
+        queueInfo.pQueuePriorities = &priority;
+        queueCreateInfos.push_back(queueInfo);
     }
 
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
     deviceFeatures.tessellationShader = VK_TRUE;
-    deviceFeatures.geometryShader = VK_TRUE;
     deviceFeatures.shaderTessellationAndGeometryPointSize = VK_TRUE;
-    deviceFeatures.shaderFloat64 = VK_TRUE;
 
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredDeviceExtensions.size());
@@ -385,7 +391,7 @@ ou::GraphicsContext::GraphicsContext(int width, int height, bool fullscreen)
 
     // retrieve the graphics queue handles
     , m_graphicsQueue(m_device->getQueue(m_queueIndices.graphics, 0))
-    , m_graphicsQueue2(m_device->getQueue(m_queueIndices.graphics, 1))
+    , m_computeQueue(m_device->getQueue(m_queueIndices.compute, 0))
     , m_presentQueue(m_device->getQueue(m_queueIndices.presentation, 0))
 
     // make command pool
@@ -408,9 +414,9 @@ vk::Queue ou::GraphicsContext::graphicsQueue() const
     return m_graphicsQueue;
 }
 
-vk::Queue ou::GraphicsContext::graphicsQueue2() const
+vk::Queue ou::GraphicsContext::computeQueue() const
 {
-    return m_graphicsQueue2;
+    return m_computeQueue;
 }
 
 vk::Queue ou::GraphicsContext::presentQueue() const
@@ -797,6 +803,12 @@ void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, st
 
         sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
         destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eGeneral) {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = {};
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eAllCommands;
     } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
         barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
         barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;

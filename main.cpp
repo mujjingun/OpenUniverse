@@ -208,7 +208,7 @@ void VulkanApplication::recordDrawCommands()
         for (std::size_t index = 0; index < m_swapchainProps.imageCount; ++index) {
 
             // bind uniform descriptor sets
-            std::array<vk::WriteDescriptorSet, 8> descriptorWrites{};
+            std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
 
             vk::DescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = *m_uniformBuffers[index].buffer;
@@ -282,31 +282,24 @@ void VulkanApplication::recordDrawCommands()
             bloomImageInfo.imageView = *m_swapchain.bloomImages[index].view;
             bloomImageInfo.sampler = *m_sampler;
 
-            descriptorWrites[5].dstSet = m_swapchain.bloomVDescriptorSet.sets[index];
+            descriptorWrites[5].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
             descriptorWrites[5].dstBinding = 0;
             descriptorWrites[5].dstArrayElement = 0;
             descriptorWrites[5].descriptorType = vk::DescriptorType::eCombinedImageSampler;
             descriptorWrites[5].descriptorCount = 1;
             descriptorWrites[5].pImageInfo = &bloomImageInfo;
 
-            descriptorWrites[6].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
-            descriptorWrites[6].dstBinding = 0;
-            descriptorWrites[6].dstArrayElement = 0;
-            descriptorWrites[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[6].descriptorCount = 1;
-            descriptorWrites[6].pImageInfo = &scaledHdrImageInfo;
-
             vk::DescriptorImageInfo hdrImageInfo{};
             hdrImageInfo.imageLayout = vk::ImageLayout::eTransferSrcOptimal;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
-            descriptorWrites[7].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
-            descriptorWrites[7].dstBinding = 1;
-            descriptorWrites[7].dstArrayElement = 0;
-            descriptorWrites[7].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[7].descriptorCount = 1;
-            descriptorWrites[7].pImageInfo = &hdrImageInfo;
+            descriptorWrites[6].dstSet = m_swapchain.sceneDescriptorSet.sets[index];
+            descriptorWrites[6].dstBinding = 1;
+            descriptorWrites[6].dstArrayElement = 0;
+            descriptorWrites[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            descriptorWrites[6].descriptorCount = 1;
+            descriptorWrites[6].pImageInfo = &hdrImageInfo;
 
             m_context.device().updateDescriptorSets(descriptorWrites, {});
 
@@ -348,7 +341,7 @@ void VulkanApplication::recordDrawCommands()
                 ImageObject const& dstImage = m_swapchain.scaledHdrImages[index];
 
                 transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal, 1);
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
 
                 vk::ImageBlit blit{};
                 blit.srcOffsets[0].x = 0;
@@ -374,11 +367,10 @@ void VulkanApplication::recordDrawCommands()
                 blit.dstSubresource.layerCount = 1;
 
                 commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
-                    *dstImage.image, vk::ImageLayout::eTransferDstOptimal,
-                    { blit }, vk::Filter::eLinear);
+                    *dstImage.image, vk::ImageLayout::eTransferDstOptimal, { blit }, vk::Filter::eLinear);
 
                 transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
             }
 
             vk::RenderPassBeginInfo bloomRenderPassInfo{};
@@ -386,7 +378,7 @@ void VulkanApplication::recordDrawCommands()
             bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[index];
             bloomRenderPassInfo.renderArea.offset.x = 0;
             bloomRenderPassInfo.renderArea.offset.y = 0;
-            bloomRenderPassInfo.renderArea.extent = m_swapchain.scaledHdrImages[index].extent;
+            bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[index].extent;
             bloomRenderPassInfo.clearValueCount = clearValues.size();
             bloomRenderPassInfo.pClearValues = clearValues.data();
 
@@ -395,12 +387,6 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
                     { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
-                commandBuffer.draw(4, 1, 0, 0);
-
-                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipelineLayout, 0,
-                    { m_swapchain.bloomVDescriptorSet.sets[index] }, {});
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomVPipeline);
                 commandBuffer.draw(4, 1, 0, 0);
             }
             commandBuffer.endRenderPass();
@@ -541,7 +527,7 @@ void VulkanApplication::drawFrame()
                 submitInfo.commandBufferCount = 1;
                 submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[nextOffscreenIndex];
 
-                m_context.graphicsQueue2().submit({ submitInfo }, *m_swapchain.noiseFences[nextOffscreenIndex]);
+                m_context.computeQueue().submit({ submitInfo }, *m_swapchain.noiseFences[nextOffscreenIndex]);
 
                 m_renderingHeightmap = true;
 
@@ -559,7 +545,7 @@ void VulkanApplication::drawFrame()
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &*m_swapchain.noiseCommandBuffers[0];
 
-        m_context.graphicsQueue2().submit({ submitInfo }, *m_swapchain.noiseFences[0]);
+        m_context.computeQueue().submit({ submitInfo }, *m_swapchain.noiseFences[0]);
 
         m_updateOverallmap = false;
 

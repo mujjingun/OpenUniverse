@@ -15,7 +15,7 @@ const float weight[5] = float[] (0.227027, 0.1945946, 0.1216216, 0.054054, 0.016
 vec3 threshold(vec3 c)
 {
     float brightness = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    if (brightness > 5.0) {
+    if (brightness > 1.0) {
         return c;
     }
     else {
