@@ -914,11 +914,11 @@ vk::UniqueRenderPass ou::GraphicsContext::makeRenderPass(std::vector<vk::Subpass
     return m_device->createRenderPassUnique(renderPassInfo);
 }
 
-vk::UniquePipelineLayout ou::GraphicsContext::makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const
+vk::UniquePipelineLayout ou::GraphicsContext::makePipelineLayout(std::vector<vk::DescriptorSetLayout> const& descriptorSetLayouts) const
 {
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = static_cast<std::uint32_t>(descriptorSetLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
@@ -958,25 +958,31 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::CullModeFlags cullMode,
     bool enableBlending, bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
-    const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const
+    const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,
+    const char* vertexShaderEntryPoint, const char* fragmentShaderEntryPoint,
+    const char* tcShaderEntryPoint, const char* teShaderEntryPoint, const char* geometryShaderEntryPoint) const
 {
     // make shaders
-    vk::UniqueShaderModule vertShaderModule = createShaderModule(*m_device, readFile(vertexShaderFile));
-    vk::UniqueShaderModule fragShaderModule = createShaderModule(*m_device, readFile(fragmentShaderFile));
-
     std::vector<vk::PipelineShaderStageCreateInfo> shaderStages;
+
+    vk::UniqueShaderModule vertShaderModule = createShaderModule(*m_device, readFile(vertexShaderFile));
 
     vk::PipelineShaderStageCreateInfo vertexShaderStage;
     vertexShaderStage.stage = vk::ShaderStageFlagBits::eVertex;
     vertexShaderStage.module = vertShaderModule.get();
-    vertexShaderStage.pName = "main";
+    vertexShaderStage.pName = vertexShaderEntryPoint;
     shaderStages.push_back(vertexShaderStage);
 
-    vk::PipelineShaderStageCreateInfo fragmentShaderStage;
-    fragmentShaderStage.stage = vk::ShaderStageFlagBits::eFragment;
-    fragmentShaderStage.module = fragShaderModule.get();
-    fragmentShaderStage.pName = "main";
-    shaderStages.push_back(fragmentShaderStage);
+    vk::UniqueShaderModule fragShaderModule;
+    if (fragmentShaderFile) {
+        fragShaderModule = createShaderModule(*m_device, readFile(fragmentShaderFile));
+
+        vk::PipelineShaderStageCreateInfo fragmentShaderStage;
+        fragmentShaderStage.stage = vk::ShaderStageFlagBits::eFragment;
+        fragmentShaderStage.module = fragShaderModule.get();
+        fragmentShaderStage.pName = fragmentShaderEntryPoint;
+        shaderStages.push_back(fragmentShaderStage);
+    }
 
     vk::UniqueShaderModule geometryShaderModule;
     if (geometryShaderFile) {
@@ -985,7 +991,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
         vk::PipelineShaderStageCreateInfo geometryShaderStage;
         geometryShaderStage.stage = vk::ShaderStageFlagBits::eGeometry;
         geometryShaderStage.module = geometryShaderModule.get();
-        geometryShaderStage.pName = "main";
+        geometryShaderStage.pName = geometryShaderEntryPoint;
         shaderStages.push_back(geometryShaderStage);
     }
 
@@ -999,13 +1005,13 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
         vk::PipelineShaderStageCreateInfo tcShaderStage;
         tcShaderStage.stage = vk::ShaderStageFlagBits::eTessellationControl;
         tcShaderStage.module = tcShaderModule.get();
-        tcShaderStage.pName = "main";
+        tcShaderStage.pName = tcShaderEntryPoint;
         shaderStages.push_back(tcShaderStage);
 
         vk::PipelineShaderStageCreateInfo teShaderStage;
         teShaderStage.stage = vk::ShaderStageFlagBits::eTessellationEvaluation;
         teShaderStage.module = teShaderModule.get();
-        teShaderStage.pName = "main";
+        teShaderStage.pName = teShaderEntryPoint;
         shaderStages.push_back(teShaderStage);
     }
 
@@ -1407,12 +1413,12 @@ ou::ImageObject ou::GraphicsContext::makeTextureImage(const char* filename) cons
 
 vk::UniqueSampler ou::GraphicsContext::makeTextureSampler(bool unnormalizedCoordinates) const
 {
-    vk::SamplerCreateInfo samplerInfo;
+    vk::SamplerCreateInfo samplerInfo{};
     samplerInfo.magFilter = vk::Filter::eLinear;
     samplerInfo.minFilter = vk::Filter::eLinear;
 
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = vk::CompareOp::eAlways;
+    samplerInfo.compareEnable = VK_TRUE;
+    samplerInfo.compareOp = vk::CompareOp::eLess;
 
     samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
 

@@ -58,6 +58,7 @@ private:
     std::vector<BufferObject> m_mapBoundsUniformBuffers{};
     std::vector<BufferObject> m_renderMapBoundsUniformBuffers{};
     std::vector<BufferObject> m_numberBuffers{};
+    std::vector<BufferObject> m_shadowInfoBuffers{};
 
     std::size_t m_currentFrame = 0;
 

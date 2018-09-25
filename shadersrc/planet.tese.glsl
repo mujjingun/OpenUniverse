@@ -9,9 +9,10 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 iMVP;
+    mat4 shadowVP;
     vec4 eyePos;
     vec4 modelEyePos;
-    vec4 lightDir;
+    vec4 lightPos;
     int parallelCount;
     int meridianCount;
     uint noiseIndex;
@@ -81,7 +82,7 @@ void main(void)
     vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 0));
     const float noise = max(0, noiseTex.r);
 
-    vec3 modelPos = pos * (1.0f + vec3(noise * 0.002f));
+    vec3 modelPos = pos * (1.0f + vec3(noise * 0.001f));
     worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;

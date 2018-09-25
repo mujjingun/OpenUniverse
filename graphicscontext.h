@@ -133,7 +133,7 @@ public:
         std::vector<vk::SubpassDependency> const& dependencies,
         std::vector<vk::AttachmentDescription> const& attachments) const;
 
-    vk::UniquePipelineLayout makePipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const;
+    vk::UniquePipelineLayout makePipelineLayout(std::vector<vk::DescriptorSetLayout> const& descriptorSetLayouts) const;
 
     vk::UniquePipeline makePipeline(vk::PipelineLayout pipelineLayout, vk::Extent2D swapExtent,
         vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
@@ -142,7 +142,9 @@ public:
         vk::PrimitiveTopology primitiveType, vk::CullModeFlags cullMode, bool enableBlending,
         bool attachVertexData,
         vk::VertexInputBindingDescription bindingDescription,
-        const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions) const;
+        const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,
+        const char* vertexShaderEntryPoint = "main", const char* fragmentShaderEntryPoint = "main",
+        const char* tcShaderEntryPoint = "main", const char* teShaderEntryPoint = "main", const char* geometryShaderEntryPoint = "main") const;
 
     vk::UniquePipeline makeComputePipeline(vk::PipelineLayout pipelineLayout, const char* shaderFile) const;
 

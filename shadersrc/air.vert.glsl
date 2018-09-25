@@ -7,11 +7,13 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 iMVP;
+    mat4 shadowVP;
     vec4 eyePos;
     vec4 modelEyePos;
-    vec4 lightDir;
+    vec4 lightPos;
     int parallelCount;
     int meridianCount;
+    uint noiseIndex;
 } ubo;
 
 layout(set = 0, binding = 1, std140) uniform MapBoundsObject {

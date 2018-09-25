@@ -7,6 +7,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 iMVP;
+    mat4 shadowVP;
     vec4 eyePos;
     vec4 modelEyePos;
     vec4 lightPos;
@@ -22,6 +23,8 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
 } bounds;
 
 layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
+
+layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
 
 layout(location = 0) out vec4 outColor;
 
@@ -57,7 +60,7 @@ void getMapCoords(vec3 pos, float centerT, float centerP, float span, out vec3 m
     texCoords = getTexCoords(mapCoords, span);
 }
 
-const float r = 0.002f;
+const float r = 0.001f;
 const float lightIntensity = 10.0f;
 
 // returns unnormalized normal
@@ -106,6 +109,9 @@ void main() {
     vec3 normal = normalize(mat3(ubo.model) * irotate * getNormal(mapCoords, terrain, grad));
     vec3 flatNormal = normalize(mat3(ubo.model) * cartCoords);
 
+    float oceanOrTerrain = terrain > 0? 1: 0;
+    normal = mix(flatNormal, normal, oceanOrTerrain);
+
     // biome
     float biome = noiseTex.w;
     vec3 biomeColor = mix(vec3(41, 62, 28) / 256.0f, vec3(100, 90, 50) / 256.0f, smoothstep(0.3f, 0.35f, biome));
@@ -114,7 +120,6 @@ void main() {
     vec3 sandColor = vec3(236, 221, 166) / 256.0f;
     vec4 terrainColor = vec4(mix(sandColor, biomeColor, smoothstep(0.0f, 0.001f, terrain)), 1.0);
     vec4 oceanColor = vec4(vec3(0.2f, 0.2f, 0.8f) * (1.0f - pow(abs(terrain), 0.5) * .3f), 1.0f);
-    float oceanOrTerrain = terrain > 0? 1: 0;
     vec4 color = mix(oceanColor, terrainColor, oceanOrTerrain);
 
     // ice
@@ -125,15 +130,25 @@ void main() {
     vec3 modelPos = cartCoords * mix(1.0f, 1.0f + terrain * r, oceanOrTerrain);
     vec3 worldPos = mat3(ubo.model) * modelPos;
 
-    normal = mix(flatNormal, normal, oceanOrTerrain);
     vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-    float light = max(0.001f, dot(lightDir, normal)) * lightIntensity;
+    float cosLightAngle = dot(normal, lightDir);
+    float light = max(0, cosLightAngle) * lightIntensity;
 
     vec3 lightReflect = normalize(reflect(lightDir, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);
     float specularFactor = dot(vertexToEye, lightReflect);
     specularFactor = pow(max(0, specularFactor), 16);
     light += specularFactor * mix(lightIntensity, 0.0f, oceanOrTerrain);
+
+    // shadowing
+    vec4 shadowPos = ubo.shadowVP * vec4(worldPos, 1);
+    shadowPos.xyz /= shadowPos.w;
+    float bias = clamp(0.005 * tan(acos(clamp(-cosLightAngle, 0, 1))), 0, 0.02);
+    float visibility = texture(shadowMap, vec3(shadowPos.xy / 2 + .5, shadowPos.z - bias));
+    //outColor = vec4(vec3(visibility), 1);
+    //return;
+
+    light = max(0.001, light * visibility);
+
     outColor = vec4(light * color.xyz, color.a);
 }
-

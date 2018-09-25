@@ -9,6 +9,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 iMVP;
+    mat4 shadowVP;
     vec4 eyePos;
     vec4 modelEyePos;
     vec4 lightPos;
@@ -24,6 +25,8 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
 } bounds;
 
 layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
+
+layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 
 layout(location = 0) out vec4 outColor;
 
@@ -80,6 +83,9 @@ void main() {
 
     outColor = vec4(0.0f);
 
+    //outColor = vec4(texture(shadowMap, gl_FragCoord.xy / vec2(600, 480)).rrr * 5, 1);
+    //return;
+
     // inside the atmosphere
     if (dist < thickness) {
         int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
@@ -95,10 +101,10 @@ void main() {
             const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
             const vec3 normal = normalize(worldPos);
             const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-            const float light = max(0.0, dot(lightDir, normal)) * lightIntensity + 0.001f;
+            const float light = max(0.001f, dot(lightDir, normal)) * lightIntensity;
 
             vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
-            vec4 cloudColor = vec4(1.0f, 1.0f, 1.0f, cloud);
+            vec4 cloudColor = vec4(vec3(.7f), cloud);
             outColor.a = cloudColor.a + scatterColor.a * (1.0f - cloudColor.a);
             outColor.rgb = (cloudColor.rgb * cloudColor.a + scatterColor.rgb * scatterColor.a * (1.0f - cloudColor.a)) / outColor.a;
             outColor = vec4(outColor.rgb * light, outColor.a);
@@ -131,7 +137,7 @@ void main() {
             const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
             scatterLength /= maxScatterLength;
             vec4 scatterColor = vec4(0.7f, 0.7f, 1.0f, pow(scatterLength, 3) * 0.1f);
-            vec4 cloudColor = mix(vec4(vec3(1.0f), cloud), vec4(0.0f), edgeness);
+            vec4 cloudColor = mix(vec4(vec3(.7f), cloud), vec4(0.0f), edgeness);
             outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
             outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
             outColor = vec4(outColor.rgb * light, outColor.a);
@@ -140,7 +146,8 @@ void main() {
     }
 
     // the sun
-    int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, ubo.lightPos.xyz, 10.0, cartCoords);
+    vec3 worldPos = (ubo.model * unproj0).xyz;
+    int orientation = intersect(ubo.eyePos.xyz, worldPos, ubo.lightPos.xyz, 10.0, cartCoords);
     if (orientation > 0) {
         outColor += vec4(100.0, 100.0, 100.0, 1.0);
         gl_FragDepth = 1.0f - 0.001f;

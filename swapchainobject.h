@@ -8,6 +8,7 @@
 namespace ou {
 
 const std::size_t bloomCount = 3;
+const std::uint32_t maxSampleCount = 2;
 
 // set of elements that need to be recreated when the window gets resized
 struct SwapchainObject {
@@ -15,36 +16,52 @@ struct SwapchainObject {
     std::vector<vk::Image> swapchainImages{};
     std::vector<vk::UniqueImageView> swapchainImageViews{};
 
+    // shadow mapping stage
+    std::vector<ImageObject> shadowImages{};
+
+    vk::UniqueRenderPass shadowRenderPass;
+
+    DescriptorSetObject shadowPlanetDescriptorSet;
+
+    vk::UniquePipelineLayout shadowPlanetPipelineLayout;
+    vk::UniquePipeline shadowPlanetPipeline;
+
+    std::vector<vk::UniqueFramebuffer> shadowFramebuffers{};
+
     // main render stage
     ImageObject multiSampleImage;
     ImageObject depthImage;
     std::vector<ImageObject> hdrImages{};
-    std::vector<ImageObject> colorImages{};
-    std::vector<std::vector<ImageObject>> scaledHdrImages{bloomCount};
-    std::vector<std::vector<ImageObject>> bloomImages{bloomCount};
 
     vk::UniqueRenderPass hdrRenderPass;
 
-    DescriptorSetObject descriptorSet;
+    DescriptorSetObject planetDescriptorSet;
+    DescriptorSetObject shadowMapDescriptorSet;
 
-    vk::UniquePipelineLayout pipelineLayout;
-    vk::UniquePipeline terrainPipeline;
+    vk::UniquePipelineLayout planetPipelineLayout;
+    vk::UniquePipeline planetPipeline;
     vk::UniquePipeline atmospherePipeline;
 
     std::vector<vk::UniqueFramebuffer> framebuffers{};
-    std::vector<std::vector<vk::UniqueFramebuffer>> bloomFramebuffers{bloomCount};
 
-    // present & bloom shader
-    vk::UniqueRenderPass presentRenderPass;
+    // bloom shader
+    std::vector<ImageObject> scaledHdrImages;
+    std::vector<ImageObject> bloomImages;
+
     vk::UniqueRenderPass bloomRenderPass;
 
-    std::vector<DescriptorSetObject> bloomHDescriptorSet{bloomCount};
+    DescriptorSetObject bloomHDescriptorSet;
+
+    vk::UniquePipelineLayout bloomHPipelineLayout;
+    vk::UniquePipeline bloomHPipeline;
+
+    std::vector<vk::UniqueFramebuffer> bloomFramebuffers;
+
+    // present shader
+    vk::UniqueRenderPass presentRenderPass;
 
     DescriptorSetObject sceneDescriptorSet;
     DescriptorSetObject numbersDescriptorSet;
-
-    std::vector<vk::UniquePipelineLayout> bloomHPipelineLayout{bloomCount};
-    std::vector<vk::UniquePipeline> bloomHPipeline{bloomCount};
 
     vk::UniquePipelineLayout scenePipelineLayout;
     vk::UniquePipeline scenePipeline;

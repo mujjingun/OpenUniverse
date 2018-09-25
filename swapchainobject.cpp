@@ -1,7 +1,5 @@
 #include "swapchainobject.h"
 
-static const std::uint32_t maxSampleCount = 2;
-
 ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainProperties const& properties, vk::SwapchainKHR oldSwapchain)
 {
     // make swapchain
@@ -13,6 +11,62 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
     const std::size_t noiseFrameBuffersCount = 3;
     const vk::Format hdrFormat = vk::Format::eR16G16B16A16Sfloat;
+
+    // shadow rendering
+    {
+        vk::Extent2D shadowExtent = properties.extent;
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            shadowImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, shadowExtent, 1, vk::Format::eD32Sfloat,
+                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eDepth));
+        }
+
+        vk::AttachmentReference depthAttachmentRef{};
+        depthAttachmentRef.attachment = 0;
+        depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+        std::vector<vk::SubpassDescription> subpasses;
+
+        vk::SubpassDescription terrainSubpass{};
+        terrainSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        terrainSubpass.colorAttachmentCount = 0;
+        terrainSubpass.pDepthStencilAttachment = &depthAttachmentRef;
+        subpasses.push_back(terrainSubpass);
+
+        std::vector<vk::SubpassDependency> dependencies;
+
+        std::vector<vk::AttachmentDescription> attachments;
+
+        vk::AttachmentDescription depthAttachment;
+        depthAttachment.format = vk::Format::eD32Sfloat;
+        depthAttachment.samples = vk::SampleCountFlagBits::e1;
+        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+        depthAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        attachments.push_back(depthAttachment);
+
+        shadowRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
+
+        shadowPlanetDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eUniformBuffer,
+                vk::DescriptorType::eUniformBuffer,
+                vk::DescriptorType::eCombinedImageSampler },
+            { vk::ShaderStageFlagBits::eAll,
+                vk::ShaderStageFlagBits::eAll,
+                vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
+            { 1, 1, noiseFrameBuffersCount });
+
+        shadowPlanetPipelineLayout = context.makePipelineLayout({ *shadowPlanetDescriptorSet.layout });
+        shadowPlanetPipeline = context.makePipeline(*shadowPlanetPipelineLayout, shadowExtent, *shadowRenderPass, 0, vk::SampleCountFlagBits::e1,
+            "shaders/planet.vert.spv", nullptr, "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
+            vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, true, false, {}, {});
+
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            shadowFramebuffers.push_back(context.makeFramebuffer({ *shadowImages[i].view }, *shadowRenderPass, shadowExtent));
+        }
+    }
 
     // hdr stage
     {
@@ -31,21 +85,21 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         }
 
         // make render pass
-        vk::AttachmentReference hdrAttachmentRef;
+        vk::AttachmentReference hdrAttachmentRef{};
         hdrAttachmentRef.attachment = 0;
         hdrAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
-        vk::AttachmentReference depthAttachmentRef;
+        vk::AttachmentReference depthAttachmentRef{};
         depthAttachmentRef.attachment = 1;
         depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
-        vk::AttachmentReference multiSampleAttachmentRef;
+        vk::AttachmentReference multiSampleAttachmentRef{};
         multiSampleAttachmentRef.attachment = 2;
         multiSampleAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
         std::vector<vk::SubpassDescription> subpasses;
 
-        vk::SubpassDescription terrainSubpass;
+        vk::SubpassDescription terrainSubpass{};
         terrainSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         terrainSubpass.colorAttachmentCount = 1;
         terrainSubpass.pColorAttachments = &hdrAttachmentRef;
@@ -53,7 +107,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         terrainSubpass.pResolveAttachments = &multiSampleAttachmentRef;
         subpasses.push_back(terrainSubpass);
 
-        vk::SubpassDescription atmosphereSubpass;
+        vk::SubpassDescription atmosphereSubpass{};
         atmosphereSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         atmosphereSubpass.colorAttachmentCount = 1;
         atmosphereSubpass.pColorAttachments = &hdrAttachmentRef;
@@ -65,7 +119,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         std::vector<vk::SubpassDependency> dependencies;
 
         // terrain
-        vk::SubpassDependency terrainDependency;
+        vk::SubpassDependency terrainDependency{};
         terrainDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         terrainDependency.dstSubpass = 0;
         terrainDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -76,7 +130,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         dependencies.push_back(terrainDependency);
 
         // atmosphere
-        vk::SubpassDependency atmosphereDependency;
+        vk::SubpassDependency atmosphereDependency{};
         atmosphereDependency.srcSubpass = 0;
         atmosphereDependency.dstSubpass = 1;
         atmosphereDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
@@ -90,7 +144,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         std::vector<vk::AttachmentDescription> attachments;
 
         // hdr color attachment
-        vk::AttachmentDescription hdrAttachment;
+        vk::AttachmentDescription hdrAttachment{};
         hdrAttachment.format = hdrFormat;
         hdrAttachment.samples = sampleCount;
         hdrAttachment.loadOp = vk::AttachmentLoadOp::eClear;
@@ -102,7 +156,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         attachments.push_back(hdrAttachment);
 
         // depth attachment
-        vk::AttachmentDescription depthAttachment;
+        vk::AttachmentDescription depthAttachment{};
         depthAttachment.format = depthImage.format;
         depthAttachment.samples = sampleCount;
         depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
@@ -114,7 +168,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         attachments.push_back(depthAttachment);
 
         // multisample resolve attachment
-        vk::AttachmentDescription multiSampleAttachment;
+        vk::AttachmentDescription multiSampleAttachment{};
         multiSampleAttachment.format = multiSampleImage.format;
         multiSampleAttachment.samples = vk::SampleCountFlagBits::e1;
         multiSampleAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
@@ -127,8 +181,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         hdrRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
 
-        // make descriptor sets
-        descriptorSet = context.makeDescriptorSet(properties.imageCount,
+        planetDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eUniformBuffer,
                 vk::DescriptorType::eUniformBuffer,
                 vk::DescriptorType::eCombinedImageSampler },
@@ -137,13 +190,16 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
                 vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eFragment },
             { 1, 1, noiseFrameBuffersCount });
 
+        shadowMapDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eCombinedImageSampler }, { vk::ShaderStageFlagBits::eFragment }, { 1 });
+
         // make pipelines
-        pipelineLayout = context.makePipelineLayout(*descriptorSet.layout);
-        terrainPipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 0, sampleCount,
+        planetPipelineLayout = context.makePipelineLayout({ *planetDescriptorSet.layout, *shadowMapDescriptorSet.layout });
+        planetPipeline = context.makePipeline(*planetPipelineLayout, properties.extent, *hdrRenderPass, 0, sampleCount,
             "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
             vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, true, false, {}, {});
 
-        atmospherePipeline = context.makePipeline(*pipelineLayout, properties.extent, *hdrRenderPass, 1, sampleCount,
+        atmospherePipeline = context.makePipeline(*planetPipelineLayout, properties.extent, *hdrRenderPass, 1, sampleCount,
             "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, true, false, {}, {});
 
@@ -157,35 +213,28 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
     // bloom stage
     {
-        const std::vector<vk::Extent2D> bloomExtents = {
-            { properties.extent.width / 2, properties.extent.height / 2 },
-            { properties.extent.width / 4, properties.extent.height / 4 },
-            { properties.extent.width / 8, properties.extent.height / 8 },
-        };
+        const vk::Extent2D bloomExtent{ properties.extent.width, properties.extent.height / 2 };
 
-        for (std::size_t b = 0; b < bloomCount; ++b) {
-            for (std::size_t i = 0; i < properties.imageCount; ++i) {
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            scaledHdrImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtent, 1, hdrFormat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                vk::ImageAspectFlagBits::eColor));
 
-                scaledHdrImages[b].push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtents[b], 1, hdrFormat,
-                    vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
-                    vk::ImageAspectFlagBits::eColor));
+            transitionImageLayout(*context.beginSingleTimeCommands(), *scaledHdrImages[i].image, 1,
+                vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
 
-                transitionImageLayout(*context.beginSingleTimeCommands(), *scaledHdrImages[b][i].image, 1,
-                    vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
-
-                bloomImages[b].push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtents[b], 1, hdrFormat,
-                    vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                    vk::ImageAspectFlagBits::eColor));
-            }
+            bloomImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtent, 1, vk::Format::eB8G8R8A8Unorm,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                vk::ImageAspectFlagBits::eColor));
         }
 
-        vk::AttachmentReference bloomAttachmentRef;
+        vk::AttachmentReference bloomAttachmentRef{};
         bloomAttachmentRef.attachment = 0;
         bloomAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
         std::vector<vk::SubpassDescription> subpasses;
 
-        vk::SubpassDescription bloomSubpassH;
+        vk::SubpassDescription bloomSubpassH{};
         bloomSubpassH.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         bloomSubpassH.colorAttachmentCount = 1;
         bloomSubpassH.pColorAttachments = &bloomAttachmentRef;
@@ -196,7 +245,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         std::vector<vk::SubpassDependency> dependencies;
 
         // bloom horizontal
-        vk::SubpassDependency bloomHDependency;
+        vk::SubpassDependency bloomHDependency{};
         bloomHDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         bloomHDependency.dstSubpass = 0;
         bloomHDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -207,8 +256,8 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         std::vector<vk::AttachmentDescription> attachments;
 
-        vk::AttachmentDescription bloomAttachment;
-        bloomAttachment.format = hdrFormat;
+        vk::AttachmentDescription bloomAttachment{};
+        bloomAttachment.format = vk::Format::eB8G8R8A8Unorm;
         bloomAttachment.samples = vk::SampleCountFlagBits::e1;
         bloomAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
         bloomAttachment.storeOp = vk::AttachmentStoreOp::eStore;
@@ -220,20 +269,18 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         bloomRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
 
-        for (std::size_t b = 0; b < bloomCount; ++b) {
-            bloomHDescriptorSet[b] = context.makeDescriptorSet(properties.imageCount,
-                { vk::DescriptorType::eCombinedImageSampler },
-                { vk::ShaderStageFlagBits::eFragment },
-                { 1 });
+        bloomHDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eCombinedImageSampler },
+            { vk::ShaderStageFlagBits::eFragment },
+            { 1 });
 
-            bloomHPipelineLayout[b] = context.makePipelineLayout(*bloomHDescriptorSet[b].layout);
-            bloomHPipeline[b] = context.makePipeline(*bloomHPipelineLayout[b], bloomExtents[b], *bloomRenderPass, 0, vk::SampleCountFlagBits::e1,
-                "shaders/bloomh.vert.spv", "shaders/bloomh.frag.spv", nullptr, nullptr, nullptr,
-                vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, false, false, {}, {});
+        bloomHPipelineLayout = context.makePipelineLayout({ *bloomHDescriptorSet.layout });
+        bloomHPipeline = context.makePipeline(*bloomHPipelineLayout, bloomExtent, *bloomRenderPass, 0, vk::SampleCountFlagBits::e1,
+            "shaders/bloomh.vert.spv", "shaders/bloomh.frag.spv", nullptr, nullptr, nullptr,
+            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, false, false, {}, {});
 
-            for (std::size_t i = 0; i < properties.imageCount; ++i) {
-                bloomFramebuffers[b].push_back(context.makeFramebuffer({ *bloomImages[b][i].view }, *bloomRenderPass, bloomExtents[b]));
-            }
+        for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            bloomFramebuffers.push_back(context.makeFramebuffer({ *bloomImages[i].view }, *bloomRenderPass, bloomExtent));
         }
     }
 
@@ -245,7 +292,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         std::vector<vk::SubpassDescription> subpasses;
 
-        vk::SubpassDescription sceneSubpass;
+        vk::SubpassDescription sceneSubpass{};
         sceneSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         sceneSubpass.colorAttachmentCount = 1;
         sceneSubpass.pColorAttachments = &presentAttachmentRef;
@@ -253,7 +300,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         sceneSubpass.pResolveAttachments = nullptr;
         subpasses.push_back(sceneSubpass);
 
-        vk::SubpassDescription numbersSubpass;
+        vk::SubpassDescription numbersSubpass{};
         numbersSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
         numbersSubpass.colorAttachmentCount = 1;
         numbersSubpass.pColorAttachments = &presentAttachmentRef;
@@ -264,7 +311,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         std::vector<vk::SubpassDependency> dependencies;
 
         // scene
-        vk::SubpassDependency sceneDependency;
+        vk::SubpassDependency sceneDependency{};
         sceneDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         sceneDependency.dstSubpass = 0;
         sceneDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -274,7 +321,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         dependencies.push_back(sceneDependency);
 
         // numbers
-        vk::SubpassDependency numbersDependency;
+        vk::SubpassDependency numbersDependency{};
         numbersDependency.srcSubpass = 0;
         numbersDependency.dstSubpass = 1;
         numbersDependency.srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
@@ -286,7 +333,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         std::vector<vk::AttachmentDescription> attachments;
 
         // present attachment
-        vk::AttachmentDescription presentAttachment;
+        vk::AttachmentDescription presentAttachment{};
         presentAttachment.format = properties.surfaceFormat.format;
         presentAttachment.samples = vk::SampleCountFlagBits::e1;
         presentAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
@@ -302,9 +349,9 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         sceneDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eCombinedImageSampler, vk::DescriptorType::eCombinedImageSampler },
             { vk::ShaderStageFlagBits::eFragment, vk::ShaderStageFlagBits::eFragment },
-            { bloomCount, 1 });
+            { 1, 1 });
 
-        scenePipelineLayout = context.makePipelineLayout(*sceneDescriptorSet.layout);
+        scenePipelineLayout = context.makePipelineLayout({ *sceneDescriptorSet.layout });
         scenePipeline = context.makePipeline(*scenePipelineLayout, properties.extent, *presentRenderPass, 0, vk::SampleCountFlagBits::e1,
             "shaders/scene.vert.spv", "shaders/scene.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, false, false, {}, {});
@@ -312,7 +359,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         numbersDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eFragment }, { 3 });
 
-        numbersPipelineLayout = context.makePipelineLayout(*numbersDescriptorSet.layout);
+        numbersPipelineLayout = context.makePipelineLayout({ *numbersDescriptorSet.layout });
         numbersPipeline = context.makePipeline(*numbersPipelineLayout, properties.extent, *presentRenderPass, 1, vk::SampleCountFlagBits::e1,
             "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, true, false, {}, {});
@@ -329,7 +376,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
     {
         // make offscreen render target
         const vk::Extent2D noiseImageExtent = { properties.extent.width, properties.extent.height };
-        const vk::Format noiseImageFormat = vk::Format::eR16G16B16A16Sfloat;
+        const vk::Format noiseImageFormat = vk::Format::eR32G32B32A32Sfloat;
         const std::uint32_t noiseLayersCount = 2;
 
         noiseFences = context.makeFences(noiseFrameBuffersCount, false);
@@ -347,14 +394,14 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         // Host accessible scratch buffer
         terrain = context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eTransferDst,
-            static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 8 * noiseLayersCount));
+            static_cast<vk::DeviceSize>(noiseImageExtent.width * noiseImageExtent.height * 16 * noiseLayersCount));
 
         noiseDescriptorSet = context.makeDescriptorSet(noiseFrameBuffersCount,
             { vk::DescriptorType::eUniformBuffer, vk::DescriptorType::eStorageImage },
             { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
             { 1, 1 });
 
-        noisePipelineLayout = context.makePipelineLayout(*noiseDescriptorSet.layout);
+        noisePipelineLayout = context.makePipelineLayout({ *noiseDescriptorSet.layout });
         noisePipeline = context.makeComputePipeline(*noisePipelineLayout, "shaders/noise.comp.spv");
 
         noiseCommandBuffers = context.allocateCommandBuffers(noiseFrameBuffersCount);

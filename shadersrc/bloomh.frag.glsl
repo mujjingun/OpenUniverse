@@ -16,7 +16,7 @@ vec3 threshold(vec3 c)
 {
     float brightness = dot(c, vec3(0.2126, 0.7152, 0.0722));
     if (brightness > 5.0) {
-        return c;
+        return vec3(1.0) - exp(-c * exposure);
     }
     else {
         return vec3(0);

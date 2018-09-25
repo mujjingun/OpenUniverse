@@ -56,6 +56,7 @@ struct UniformBufferObject {
     glm::mat4 view;
     glm::mat4 proj;
     glm::mat4 iMVP;
+    glm::mat4 shadowVP;
     glm::vec4 eyePos;
     glm::vec4 modelEyePos;
     glm::vec4 lightPos;
@@ -90,8 +91,12 @@ VulkanApplication::VulkanApplication()
 {
     // make uniform buffers
     for (std::uint32_t i = 0; i < m_swapchainProps.imageCount; ++i) {
-        m_uniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
-        m_renderMapBoundsUniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
+        m_uniformBuffers.push_back(
+            m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
+        m_renderMapBoundsUniformBuffers.push_back(
+            m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
+        m_shadowInfoBuffers.push_back(
+            m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(UniformBufferObject)));
     }
     for (std::size_t i = 0; i < m_swapchain.noiseImages.size(); ++i) {
         m_mapBoundsUniformBuffers.push_back(m_context.makeHostVisibleBuffer(vk::BufferUsageFlagBits::eUniformBuffer, sizeof(MapBoundsObject)));
@@ -127,17 +132,8 @@ static std::uint32_t ceilDiv(std::uint32_t x, std::uint32_t y)
 
 void VulkanApplication::recordDrawCommands()
 {
-    std::array<vk::ClearValue, 4> clearValues{};
-
-    // color buffer clear value
-    clearValues[0].color.float32[0] = 0.0f;
-    clearValues[0].color.float32[1] = 0.0f;
-    clearValues[0].color.float32[2] = 0.0f;
-    clearValues[0].color.float32[3] = 1.0f;
-
-    // depth buffer clear value
-    clearValues[1].depthStencil.depth = 1.0f;
-    clearValues[1].depthStencil.stencil = 0;
+    vk::ClearColorValue clearColor(std::array<float, 4>{ { 0.0f, 0.0f, 0.0f, 1.0f } });
+    vk::ClearDepthStencilValue clearDepth(1.0f, 0.0f);
 
     // record offscreen rendering
     {
@@ -210,22 +206,41 @@ void VulkanApplication::recordDrawCommands()
             // bind uniform descriptor sets
             std::vector<vk::WriteDescriptorSet> descriptorWrites{};
 
-            vk::DescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = *m_uniformBuffers[index].buffer;
-            bufferInfo.offset = 0;
-            bufferInfo.range = VK_WHOLE_SIZE;
+            // shadow planet info
+            vk::DescriptorBufferInfo shadowPlanetInfo{};
+            shadowPlanetInfo.buffer = *m_shadowInfoBuffers[index].buffer;
+            shadowPlanetInfo.offset = 0;
+            shadowPlanetInfo.range = VK_WHOLE_SIZE;
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.descriptorSet.sets[index], 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &bufferInfo));
+                m_swapchain.shadowPlanetDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eUniformBuffer, nullptr, &shadowPlanetInfo));
 
+            // planet info
+            vk::DescriptorBufferInfo planetInfo{};
+            planetInfo.buffer = *m_uniformBuffers[index].buffer;
+            planetInfo.offset = 0;
+            planetInfo.range = VK_WHOLE_SIZE;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.planetDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eUniformBuffer, nullptr, &planetInfo));
+
+            // map bounds info
             vk::DescriptorBufferInfo mapBoundsUniformBufferInfo{};
             mapBoundsUniformBufferInfo.buffer = *m_renderMapBoundsUniformBuffers[index].buffer;
             mapBoundsUniformBufferInfo.offset = 0;
             mapBoundsUniformBufferInfo.range = VK_WHOLE_SIZE;
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.descriptorSet.sets[index], 1, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &mapBoundsUniformBufferInfo));
+                m_swapchain.planetDescriptorSet.sets[index], 1, 0,
+                1, vk::DescriptorType::eUniformBuffer, nullptr, &mapBoundsUniformBufferInfo));
 
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.shadowPlanetDescriptorSet.sets[index], 1, 0,
+                1, vk::DescriptorType::eUniformBuffer, nullptr, &mapBoundsUniformBufferInfo));
+
+            // map images
             std::vector<vk::DescriptorImageInfo> noiseImageInfos{};
             for (auto const& image : m_swapchain.noiseImages) {
                 vk::DescriptorImageInfo imageInfo;
@@ -236,17 +251,29 @@ void VulkanApplication::recordDrawCommands()
             }
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.descriptorSet.sets[index], 2, 0,
+                m_swapchain.planetDescriptorSet.sets[index], 2, 0,
                 static_cast<std::uint32_t>(noiseImageInfos.size()),
                 vk::DescriptorType::eCombinedImageSampler, noiseImageInfos.data()));
 
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.shadowPlanetDescriptorSet.sets[index], 2, 0,
+                static_cast<std::uint32_t>(noiseImageInfos.size()),
+                vk::DescriptorType::eCombinedImageSampler, noiseImageInfos.data()));
+
+            // shadow image
+            vk::DescriptorImageInfo shadowMapImageInfo{};
+            shadowMapImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            shadowMapImageInfo.imageView = *m_swapchain.shadowImages[index].view;
+            shadowMapImageInfo.sampler = *m_sampler;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.shadowMapDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eCombinedImageSampler, &shadowMapImageInfo));
+
+            // fps indicator
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
-                vk::DescriptorBufferInfo bufInfo;
-                bufInfo.buffer = *buf.buffer;
-                bufInfo.offset = 0;
-                bufInfo.range = VK_WHOLE_SIZE;
-                numBufInfos.push_back(bufInfo);
+                numBufInfos.push_back(vk::DescriptorBufferInfo(*buf.buffer, 0, VK_WHOLE_SIZE));
             }
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
@@ -254,28 +281,27 @@ void VulkanApplication::recordDrawCommands()
                 static_cast<std::uint32_t>(noiseImageInfos.size()),
                 vk::DescriptorType::eUniformBuffer, nullptr, numBufInfos.data()));
 
-            std::vector<vk::DescriptorImageInfo> scaledHdrImageInfos{bloomCount};
-            for (std::uint32_t b = 0; b < bloomCount; ++b) {
-                scaledHdrImageInfos[b].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-                scaledHdrImageInfos[b].imageView = *m_swapchain.scaledHdrImages[b][index].view;
-                scaledHdrImageInfos[b].sampler = *m_sampler;
+            // scaled hdr image for bloom input
+            vk::DescriptorImageInfo scaledHdrImageInfo{};
+            scaledHdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            scaledHdrImageInfo.imageView = *m_swapchain.scaledHdrImages[index].view;
+            scaledHdrImageInfo.sampler = *m_sampler;
 
-                descriptorWrites.push_back(vk::WriteDescriptorSet(
-                    m_swapchain.bloomHDescriptorSet[b].sets[index], 0, 0,
-                    1, vk::DescriptorType::eCombinedImageSampler, &scaledHdrImageInfos[b]));
-            }
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.bloomHDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eCombinedImageSampler, &scaledHdrImageInfo));
 
-            std::vector<vk::DescriptorImageInfo> bloomImageInfos{bloomCount};
-            for (std::uint32_t b = 0; b < bloomCount; ++b) {
-                bloomImageInfos[b].imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                bloomImageInfos[b].imageView = *m_swapchain.bloomImages[b][index].view;
-                bloomImageInfos[b].sampler = *m_sampler;
+            // bloom image for composite input
+            vk::DescriptorImageInfo bloomImageInfo{};
+            bloomImageInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            bloomImageInfo.imageView = *m_swapchain.bloomImages[index].view;
+            bloomImageInfo.sampler = *m_sampler;
 
-                descriptorWrites.push_back(vk::WriteDescriptorSet(
-                    m_swapchain.sceneDescriptorSet.sets[index], 0, b,
-                    1, vk::DescriptorType::eCombinedImageSampler, &bloomImageInfos[b]));
-            }
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.sceneDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eCombinedImageSampler, &bloomImageInfo));
 
+            // hdr image for composite input
             vk::DescriptorImageInfo hdrImageInfo{};
             hdrImageInfo.imageLayout = vk::ImageLayout::eTransferSrcOptimal;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
@@ -295,33 +321,64 @@ void VulkanApplication::recordDrawCommands()
             vk::CommandBuffer commandBuffer = *m_swapchain.commandBuffers[index];
             commandBuffer.begin(beginInfo);
 
-            vk::RenderPassBeginInfo mainRenderPassInfo{};
-            mainRenderPassInfo.renderPass = *m_swapchain.hdrRenderPass;
-            mainRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
-            mainRenderPassInfo.renderArea.offset.x = 0;
-            mainRenderPassInfo.renderArea.offset.y = 0;
-            mainRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
-            mainRenderPassInfo.clearValueCount = clearValues.size();
-            mainRenderPassInfo.pClearValues = clearValues.data();
+            auto planetVertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
 
-            commandBuffer.beginRenderPass(mainRenderPassInfo, vk::SubpassContents::eInline);
+            // render shadow depth
             {
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.pipelineLayout, 0,
-                    { m_swapchain.descriptorSet.sets[index] }, {});
+                std::array<vk::ClearValue, 1> clearValues = { { clearDepth } };
 
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.terrainPipeline);
-                auto vertexCount = static_cast<std::uint32_t>(m_parallelCount * m_meridianCount * 4);
-                commandBuffer.draw(vertexCount, 1, 0, 0);
+                vk::RenderPassBeginInfo shadowRenderPassInfo{};
+                shadowRenderPassInfo.renderPass = *m_swapchain.shadowRenderPass;
+                shadowRenderPassInfo.framebuffer = *m_swapchain.shadowFramebuffers[index];
+                shadowRenderPassInfo.renderArea.offset.x = 0;
+                shadowRenderPassInfo.renderArea.offset.y = 0;
+                shadowRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+                shadowRenderPassInfo.clearValueCount = clearValues.size();
+                shadowRenderPassInfo.pClearValues = clearValues.data();
+
+                commandBuffer.beginRenderPass(shadowRenderPassInfo, vk::SubpassContents::eInline);
+
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.shadowPlanetPipelineLayout, 0,
+                    { m_swapchain.shadowPlanetDescriptorSet.sets[index] }, {});
+
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.shadowPlanetPipeline);
+                commandBuffer.draw(planetVertexCount, 1, 0, 0);
+
+                commandBuffer.endRenderPass();
+            }
+
+            // main render pass
+            {
+                std::array<vk::ClearValue, 2> clearValues = { { clearColor, clearDepth } };
+
+                vk::RenderPassBeginInfo mainRenderPassInfo{};
+                mainRenderPassInfo.renderPass = *m_swapchain.hdrRenderPass;
+                mainRenderPassInfo.framebuffer = *m_swapchain.framebuffers[index];
+                mainRenderPassInfo.renderArea.offset.x = 0;
+                mainRenderPassInfo.renderArea.offset.y = 0;
+                mainRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+                mainRenderPassInfo.clearValueCount = clearValues.size();
+                mainRenderPassInfo.pClearValues = clearValues.data();
+
+                commandBuffer.beginRenderPass(mainRenderPassInfo, vk::SubpassContents::eInline);
+
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.planetPipelineLayout, 0,
+                    { m_swapchain.planetDescriptorSet.sets[index], m_swapchain.shadowMapDescriptorSet.sets[index] }, {});
+
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.planetPipeline);
+                commandBuffer.draw(planetVertexCount, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
                 commandBuffer.draw(3, 1, 0, 0);
+
+                commandBuffer.endRenderPass();
             }
-            commandBuffer.endRenderPass();
 
             // blit image
             {
                 ImageObject const& srcImage = m_swapchain.hdrImages[index];
+                ImageObject const& dstImage = m_swapchain.scaledHdrImages[index];
 
                 vk::ImageBlit blit{};
                 blit.srcOffsets[0].x = 0;
@@ -335,7 +392,6 @@ void VulkanApplication::recordDrawCommands()
                 blit.srcSubresource.baseArrayLayer = 0;
                 blit.srcSubresource.layerCount = 1;
 
-                blit.dstOffsets[0].x = 0;
                 blit.dstOffsets[0].y = 0;
                 blit.dstOffsets[0].z = 0;
                 blit.dstOffsets[1].z = 1;
@@ -344,55 +400,68 @@ void VulkanApplication::recordDrawCommands()
                 blit.dstSubresource.baseArrayLayer = 0;
                 blit.dstSubresource.layerCount = 1;
 
-                for (std::uint32_t b = 0; b < bloomCount; ++b) {
-                    ImageObject const& dstImage = m_swapchain.scaledHdrImages[b][index];
+                transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
 
-                    transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
+                std::int32_t width = dstImage.extent.width / 2;
+                std::int32_t height = static_cast<std::int32_t>(dstImage.extent.height);
+                for (std::uint32_t b = 0; b < bloomCount; ++b, width /= 2, height /= 2) {
 
-                    blit.dstOffsets[1].x = static_cast<std::int32_t>(dstImage.extent.width);
-                    blit.dstOffsets[1].y = static_cast<std::int32_t>(dstImage.extent.height);
+                    blit.dstOffsets[0].x = b > 0 ? dstImage.extent.width / 2 + 3 : 0;
+                    blit.dstOffsets[1].x = blit.dstOffsets[0].x + width;
+                    blit.dstOffsets[1].y = blit.dstOffsets[0].y + height;
 
                     commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
                         *dstImage.image, vk::ImageLayout::eTransferDstOptimal, { blit }, vk::Filter::eLinear);
 
-                    transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
+                    if (b > 0) {
+                        blit.dstOffsets[0].y += height + 3;
+                    }
                 }
+
+                transitionImageLayout(commandBuffer, *dstImage.image, 1,
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
             }
 
-            vk::RenderPassBeginInfo bloomRenderPassInfo{};
-            bloomRenderPassInfo.renderPass = *m_swapchain.bloomRenderPass;
-            bloomRenderPassInfo.renderArea.offset.x = 0;
-            bloomRenderPassInfo.renderArea.offset.y = 0;
-            bloomRenderPassInfo.clearValueCount = clearValues.size();
-            bloomRenderPassInfo.pClearValues = clearValues.data();
+            // bloom horizontally
+            {
+                std::array<vk::ClearValue, 1> clearValues = { { clearColor } };
 
-            for (std::uint32_t b = 0; b < bloomCount; ++b) {
-                bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[b][index];
-                bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[b][index].extent;
+                vk::RenderPassBeginInfo bloomRenderPassInfo{};
+                bloomRenderPassInfo.renderPass = *m_swapchain.bloomRenderPass;
+                bloomRenderPassInfo.renderArea.offset.x = 0;
+                bloomRenderPassInfo.renderArea.offset.y = 0;
+                bloomRenderPassInfo.clearValueCount = clearValues.size();
+                bloomRenderPassInfo.pClearValues = clearValues.data();
+
+                bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[index];
+                bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[index].extent;
 
                 commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
-                {
-                    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout[b], 0,
-                        { m_swapchain.bloomHDescriptorSet[b].sets[index] }, {});
-                    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline[b]);
-                    commandBuffer.draw(3, 1, 0, 0);
-                }
+
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
+                    { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
+                commandBuffer.draw(3, 1, 0, 0);
+
                 commandBuffer.endRenderPass();
             }
 
-            vk::RenderPassBeginInfo presentRenderPassInfo{};
-            presentRenderPassInfo.renderPass = *m_swapchain.presentRenderPass;
-            presentRenderPassInfo.framebuffer = *m_swapchain.presentFramebuffers[index];
-            presentRenderPassInfo.renderArea.offset.x = 0;
-            presentRenderPassInfo.renderArea.offset.y = 0;
-            presentRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
-            presentRenderPassInfo.clearValueCount = clearValues.size();
-            presentRenderPassInfo.pClearValues = clearValues.data();
-
-            commandBuffer.beginRenderPass(presentRenderPassInfo, vk::SubpassContents::eInline);
+            // bloom vertically + combine with hdr
             {
+                std::array<vk::ClearValue, 1> clearValues = { { clearColor } };
+
+                vk::RenderPassBeginInfo presentRenderPassInfo{};
+                presentRenderPassInfo.renderPass = *m_swapchain.presentRenderPass;
+                presentRenderPassInfo.framebuffer = *m_swapchain.presentFramebuffers[index];
+                presentRenderPassInfo.renderArea.offset.x = 0;
+                presentRenderPassInfo.renderArea.offset.y = 0;
+                presentRenderPassInfo.renderArea.extent = m_swapchainProps.extent;
+                presentRenderPassInfo.clearValueCount = clearValues.size();
+                presentRenderPassInfo.pClearValues = clearValues.data();
+
+                commandBuffer.beginRenderPass(presentRenderPassInfo, vk::SubpassContents::eInline);
+
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipelineLayout, 0,
                     { m_swapchain.sceneDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.scenePipeline);
@@ -403,8 +472,9 @@ void VulkanApplication::recordDrawCommands()
                     { m_swapchain.numbersDescriptorSet.sets[index] }, {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.numbersPipeline);
                 commandBuffer.draw(3, 1, 0, 0);
+
+                commandBuffer.endRenderPass();
             }
-            commandBuffer.endRenderPass();
 
             commandBuffer.end();
         }
@@ -442,15 +512,28 @@ void VulkanApplication::drawFrame()
         // TODO: try logarithmic depth?
         float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
         ubo.proj = glm::perspective(glm::radians(45.0f),
-            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height, near, near * 100.0f);
+            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
+            near, near * 100.0f);
         ubo.proj[1][1] *= -1; // invert Y axis
 
         ubo.iMVP = glm::inverse(ubo.proj * ubo.view * ubo.model);
 
+        ubo.lightPos = glm::vec4(glm::vec3(200, -200, 0), 0);
+
+        glm::vec3 worldPlanetCenter = glm::vec3(ubo.model * glm::vec4(0));
+        float planetToLight = glm::distance(worldPlanetCenter, glm::vec3(ubo.lightPos));
+
+        // TODO: adjust this
+        glm::mat4 shadowView = glm::lookAt(glm::vec3(ubo.lightPos), worldPlanetCenter, glm::vec3(0, 0, 1));
+        glm::mat4 shadowProj = glm::perspective(glm::radians(0.5f),
+            static_cast<float>(m_swapchain.shadowImages[imageIndex].extent.width) / m_swapchain.shadowImages[imageIndex].extent.height,
+            planetToLight - 1.1f, planetToLight + 1.1f);
+        shadowProj[1][1] *= -1; // invert Y axis
+
+        ubo.shadowVP = shadowProj * shadowView;
+
         ubo.parallelCount = m_parallelCount;
         ubo.meridianCount = m_meridianCount;
-
-        ubo.lightPos = glm::vec4(glm::vec3(200, -200, 0), 0);
 
         std::size_t nextOffscreenIndex = m_lastRenderedIndex + 1;
         if (nextOffscreenIndex >= m_swapchain.noiseImages.size()) {
@@ -467,6 +550,13 @@ void VulkanApplication::drawFrame()
 
         m_context.updateMemory(*m_uniformBuffers[imageIndex].memory, &ubo, sizeof(UniformBufferObject));
         m_context.updateMemory(*m_renderMapBoundsUniformBuffers[imageIndex].memory, &m_mapBounds[m_lastRenderedIndex], sizeof(MapBoundsObject));
+
+        UniformBufferObject shadowUbo = ubo;
+        shadowUbo.eyePos = ubo.lightPos;
+        shadowUbo.view = shadowView;
+        shadowUbo.proj = shadowProj;
+
+        m_context.updateMemory(*m_shadowInfoBuffers[imageIndex].memory, &shadowUbo, sizeof(UniformBufferObject));
 
         for (std::uint32_t p = 100, i = 0; p > 0; p /= 10, ++i) {
             std::uint32_t digit = m_currentFps / p % 10;
@@ -668,7 +758,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    //m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
+    m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
 
     const float r = 1 - std::exp(-dt * 10.0f);
     glm::vec2 smoothDelta{};
@@ -710,6 +800,7 @@ void VulkanApplication::keyEvent(int key, int, int action, int)
 {
     if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
         m_context.toggleFullscreenMode();
+        m_lastCursorPos = glm::vec2(std::numeric_limits<float>::infinity());
     }
 
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
