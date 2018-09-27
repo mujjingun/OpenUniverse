@@ -21,13 +21,17 @@ compile_shader(planet.frag.glsl ../shaders/planet.frag.spv)
 compile_shader(air.vert.glsl ../shaders/air.vert.spv)
 compile_shader(air.frag.glsl ../shaders/air.frag.spv)
 
+compile_shader(bright.vert.glsl ../shaders/bright.vert.spv)
+compile_shader(bright.frag.glsl ../shaders/bright.frag.spv)
+
 compile_shader(noise.comp.glsl ../shaders/noise.comp.spv)
 
 compile_shader(numbers.vert.glsl ../shaders/numbers.vert.spv)
 compile_shader(numbers.frag.glsl ../shaders/numbers.frag.spv)
 
-compile_shader(bloomh.vert.glsl ../shaders/bloomh.vert.spv)
-compile_shader(bloomh.frag.glsl ../shaders/bloomh.frag.spv)
+compile_shader(down.comp.glsl ../shaders/down.comp.spv)
+compile_shader(bloomh.comp.glsl ../shaders/bloomh.comp.spv)
+compile_shader(bloomv.comp.glsl ../shaders/bloomv.comp.spv)
 
 compile_shader(scene.vert.glsl ../shaders/scene.vert.spv)
 compile_shader(scene.frag.glsl ../shaders/scene.frag.spv)

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <list>
 #include <set>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -318,20 +319,12 @@ vk::UniqueDevice ou::makeDevice(QueueFamilyIndices queueFamilies, vk::PhysicalDe
     // create logical device
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
 
-    vk::DeviceQueueCreateInfo graphicsQueueCreateInfo{};
-    graphicsQueueCreateInfo.queueFamilyIndex = queueFamilies.graphics;
-
-    std::set<std::uint32_t> uniqueQueueFamilies = { queueFamilies.graphics, queueFamilies.compute, queueFamilies.presentation };
-
-    for (std::uint32_t index : uniqueQueueFamilies) {
-        vk::DeviceQueueCreateInfo queueInfo{};
-        queueInfo.queueFamilyIndex = index;
-
-        float priority = 1.0f;
-        queueInfo.queueCount = 1;
-        queueInfo.pQueuePriorities = &priority;
-        queueCreateInfos.push_back(queueInfo);
-    }
+    vk::DeviceQueueCreateInfo graphicQueueInfo{};
+    graphicQueueInfo.queueFamilyIndex = queueFamilies.graphics;
+    std::vector<float> graphicsPriorities = { 1, 0 };
+    graphicQueueInfo.queueCount = static_cast<std::uint32_t>(graphicsPriorities.size());
+    graphicQueueInfo.pQueuePriorities = graphicsPriorities.data();
+    queueCreateInfos.push_back(graphicQueueInfo);
 
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
@@ -391,7 +384,7 @@ ou::GraphicsContext::GraphicsContext(int width, int height, bool fullscreen)
 
     // retrieve the graphics queue handles
     , m_graphicsQueue(m_device->getQueue(m_queueIndices.graphics, 0))
-    , m_computeQueue(m_device->getQueue(m_queueIndices.compute, 0))
+    , m_computeQueue(m_device->getQueue(m_queueIndices.compute, 1))
     , m_presentQueue(m_device->getQueue(m_queueIndices.presentation, 0))
 
     // make command pool
@@ -497,6 +490,9 @@ ou::SwapchainProperties ou::GraphicsContext::selectSwapchainProperties() const
             // use triple buffering if possible
             if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
                 return availablePresentMode;
+            }
+            if (availablePresentMode == vk::PresentModeKHR::eImmediate) {
+                bestMode = vk::PresentModeKHR::eImmediate;
             }
         }
 

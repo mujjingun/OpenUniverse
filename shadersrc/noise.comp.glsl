@@ -154,6 +154,10 @@ void main()
 {
     ivec3 size = imageSize(image);
 
+    if (gl_GlobalInvocationID.x >= size.x || gl_GlobalInvocationID.y >= size.y) {
+        return;
+    }
+
     // [0, 1] x [0, 1]
     vec2 inPos = vec2(float(gl_GlobalInvocationID.x) / size.x, float(gl_GlobalInvocationID.y) / size.y);
 
@@ -169,7 +173,7 @@ void main()
 
     // terrain
     vec3 seed_1 = cartesian * 2 + vec3(-4.0f);
-    float noise_1 = ridgeWithOctaves(seed_1, 12) - max(0, snoise(seed_1 / 2.0f)) * 3.0f - 0.2f;
+    float noise_1 = ridgeWithOctaves(seed_1, 20) - max(0, snoise(seed_1 / 2.0f)) * 3.0f - 0.2f;
 
     // cloud
     const vec3 seed_2 = seed_1 * 2 + vec3(10.0f);
@@ -179,17 +183,18 @@ void main()
             + snoise(seed_2 * 8) / 8
             + snoise(seed_2 * 32) / 16);
 
+    // temperature
+    const vec3 seed_4 = cartesian * 2 + vec3(-5.0f);
+    const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 10.0f - max(noise_1, 0) * 3.0f
+            + snoise(seed_4) * 2.0f
+            + snoise(seed_4 * 2) * 1.0f;
+
     // biome
     const vec3 seed_3 = cartesian + vec3(-5.0f);
     const float noise_3 = snoise(seed_3)
             + snoise(seed_3 * 2) / 2
             + snoise(seed_3 * 8) / 4;
 
-    // temperature
-    const vec3 seed_4 = cartesian * 2 + vec3(-5.0f);
-    const float noise_4 = sqrt(1 - cartesian.z * cartesian.z) * 30.0f - 10.0f - max(noise_1, 0) * 3.0f
-            + snoise(seed_4) * 2.0f
-            + snoise(seed_4 * 2) * 1.0f;
 
     imageStore(image, ivec3(gl_GlobalInvocationID.xy, 0), vec4(noise_1, 1.0f, 1.0f, noise_3));
     imageStore(image, ivec3(gl_GlobalInvocationID.xy, 1), vec4(noise_2, noise_4, 1.0f, 1.0f));

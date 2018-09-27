@@ -145,8 +145,6 @@ void main() {
     shadowPos.xyz /= shadowPos.w;
     float bias = clamp(0.005 * tan(acos(clamp(-cosLightAngle, 0, 1))), 0, 0.02);
     float visibility = texture(shadowMap, vec3(shadowPos.xy / 2 + .5, shadowPos.z - bias));
-    //outColor = vec4(vec3(visibility), 1);
-    //return;
 
     light = max(0.001, light * visibility);
 

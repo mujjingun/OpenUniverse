@@ -270,6 +270,15 @@ void VulkanApplication::recordDrawCommands()
                 m_swapchain.shadowMapDescriptorSet.sets[index], 0, 0,
                 1, vk::DescriptorType::eCombinedImageSampler, &shadowMapImageInfo));
 
+            // hdr image for bright pass
+            vk::DescriptorImageInfo hdrBrightImageInfo{};
+            hdrBrightImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            hdrBrightImageInfo.imageView = *m_swapchain.hdrImages[index].view;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.brightPassDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eInputAttachment, &hdrBrightImageInfo));
+
             // fps indicator
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
@@ -278,18 +287,26 @@ void VulkanApplication::recordDrawCommands()
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
                 m_swapchain.numbersDescriptorSet.sets[index], 0, 0,
-                static_cast<std::uint32_t>(noiseImageInfos.size()),
+                static_cast<std::uint32_t>(numBufInfos.size()),
                 vk::DescriptorType::eUniformBuffer, nullptr, numBufInfos.data()));
 
-            // scaled hdr image for bloom input
-            vk::DescriptorImageInfo scaledHdrImageInfo{};
-            scaledHdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            scaledHdrImageInfo.imageView = *m_swapchain.scaledHdrImages[index].view;
-            scaledHdrImageInfo.sampler = *m_sampler;
+            // bright passed image for bloom input
+            vk::DescriptorImageInfo brightPassImageInfo{};
+            brightPassImageInfo.imageLayout = vk::ImageLayout::eGeneral;
+            brightPassImageInfo.imageView = *m_swapchain.brightImages[index].view;
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.bloomHDescriptorSet.sets[index], 0, 0,
-                1, vk::DescriptorType::eCombinedImageSampler, &scaledHdrImageInfo));
+                m_swapchain.bloomDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eStorageImage, &brightPassImageInfo));
+
+            // bloom result image
+            vk::DescriptorImageInfo bloomResultImageInfo{};
+            bloomResultImageInfo.imageLayout = vk::ImageLayout::eGeneral;
+            bloomResultImageInfo.imageView = *m_swapchain.bloomImages[index].view;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.bloomDescriptorSet.sets[index], 1, 0,
+                1, vk::DescriptorType::eStorageImage, &bloomResultImageInfo));
 
             // bloom image for composite input
             vk::DescriptorImageInfo bloomImageInfo{};
@@ -303,7 +320,7 @@ void VulkanApplication::recordDrawCommands()
 
             // hdr image for composite input
             vk::DescriptorImageInfo hdrImageInfo{};
-            hdrImageInfo.imageLayout = vk::ImageLayout::eTransferSrcOptimal;
+            hdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
@@ -372,79 +389,33 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
                 commandBuffer.draw(3, 1, 0, 0);
 
-                commandBuffer.endRenderPass();
-            }
-
-            // blit image
-            {
-                ImageObject const& srcImage = m_swapchain.hdrImages[index];
-                ImageObject const& dstImage = m_swapchain.scaledHdrImages[index];
-
-                vk::ImageBlit blit{};
-                blit.srcOffsets[0].x = 0;
-                blit.srcOffsets[0].y = 0;
-                blit.srcOffsets[0].z = 0;
-                blit.srcOffsets[1].x = static_cast<std::int32_t>(srcImage.extent.width);
-                blit.srcOffsets[1].y = static_cast<std::int32_t>(srcImage.extent.height);
-                blit.srcOffsets[1].z = 1;
-                blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-                blit.srcSubresource.mipLevel = 0;
-                blit.srcSubresource.baseArrayLayer = 0;
-                blit.srcSubresource.layerCount = 1;
-
-                blit.dstOffsets[0].y = 0;
-                blit.dstOffsets[0].z = 0;
-                blit.dstOffsets[1].z = 1;
-                blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-                blit.dstSubresource.mipLevel = 0;
-                blit.dstSubresource.baseArrayLayer = 0;
-                blit.dstSubresource.layerCount = 1;
-
-                transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, dstImage.mipLevels);
-
-                std::int32_t width = dstImage.extent.width / 2;
-                std::int32_t height = static_cast<std::int32_t>(dstImage.extent.height);
-                for (std::uint32_t b = 0; b < bloomCount; ++b, width /= 2, height /= 2) {
-
-                    blit.dstOffsets[0].x = b > 0 ? dstImage.extent.width / 2 + 3 : 0;
-                    blit.dstOffsets[1].x = blit.dstOffsets[0].x + width;
-                    blit.dstOffsets[1].y = blit.dstOffsets[0].y + height;
-
-                    commandBuffer.blitImage(*srcImage.image, vk::ImageLayout::eTransferSrcOptimal,
-                        *dstImage.image, vk::ImageLayout::eTransferDstOptimal, { blit }, vk::Filter::eLinear);
-
-                    if (b > 0) {
-                        blit.dstOffsets[0].y += height + 3;
-                    }
-                }
-
-                transitionImageLayout(commandBuffer, *dstImage.image, 1,
-                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, dstImage.mipLevels);
-            }
-
-            // bloom horizontally
-            {
-                std::array<vk::ClearValue, 1> clearValues = { { clearColor } };
-
-                vk::RenderPassBeginInfo bloomRenderPassInfo{};
-                bloomRenderPassInfo.renderPass = *m_swapchain.bloomRenderPass;
-                bloomRenderPassInfo.renderArea.offset.x = 0;
-                bloomRenderPassInfo.renderArea.offset.y = 0;
-                bloomRenderPassInfo.clearValueCount = clearValues.size();
-                bloomRenderPassInfo.pClearValues = clearValues.data();
-
-                bloomRenderPassInfo.framebuffer = *m_swapchain.bloomFramebuffers[index];
-                bloomRenderPassInfo.renderArea.extent = m_swapchain.bloomImages[index].extent;
-
-                commandBuffer.beginRenderPass(bloomRenderPassInfo, vk::SubpassContents::eInline);
-
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipelineLayout, 0,
-                    { m_swapchain.bloomHDescriptorSet.sets[index] }, {});
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.bloomHPipeline);
+                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.brightPassPipelineLayout, 0,
+                    { m_swapchain.brightPassDescriptorSet.sets[index] }, {});
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.brightPassPipeline);
                 commandBuffer.draw(3, 1, 0, 0);
 
                 commandBuffer.endRenderPass();
+            }
+
+            // bloom
+            {
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomPipelineLayout, 0,
+                    1, &m_swapchain.bloomDescriptorSet.sets[index], 0, nullptr);
+
+                vk::Extent2D extent = m_swapchain.brightImages[index].extent;
+
+                // downsample
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.downsamplePipeline);
+                commandBuffer.dispatch(ceilDiv(extent.width / 2, 32), ceilDiv(extent.height / 2, 32), 1);
+
+                // bloom horizontally
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomHPipeline);
+                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height / 2, 32), 1);
+
+                // bloom vertically
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomVPipeline);
+                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height / 2, 32), 1);
             }
 
             // bloom vertically + combine with hdr
@@ -718,18 +689,20 @@ void VulkanApplication::run()
 
     // main loop
     while (!glfwWindowShouldClose(m_context.window())) {
-        drawFrame();
-
         glfwPollEvents();
 
         // advance 1 game tick
-        step(system_clock::now() - m_lastFrameTime);
+        const auto currentTime = system_clock::now();
+        const auto delta = currentTime - m_lastFrameTime;
+        m_lastFrameTime = currentTime;
+        step(delta);
+
+        // draw to screen
+        drawFrame();
 
         // calculate FPS
         m_fpsFrameCounter++;
-        const auto currentTime = system_clock::now();
         const auto elapsedTime = currentTime - m_lastFpsTime;
-
         if (elapsedTime >= seconds(1)) {
             double fps = static_cast<double>(m_fpsFrameCounter) / duration_cast<seconds>(elapsedTime).count();
             m_currentFps = static_cast<std::uint32_t>(std::round(fps));
@@ -740,10 +713,9 @@ void VulkanApplication::run()
         }
 
         // cap framerate
-        const double frameInterval = 1.0 / (m_context.refreshRate() + 1);
-        while (system_clock::now() - m_lastFrameTime < duration<double>(frameInterval))
-            std::this_thread::sleep_for(microseconds(1));
-        m_lastFrameTime = currentTime;
+        //const double frameInterval = 1.0 / (m_context.refreshRate() + 1);
+        //while (system_clock::now() - m_lastFrameTime < duration<double>(frameInterval))
+        //    std::this_thread::sleep_for(microseconds(1));
     }
 
     // TODO: temp workaround for freezing in fullscreen mode
@@ -758,7 +730,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    m_planetRotateAngle += dt / 4.0f * glm::radians(90.0f);
+    m_planetRotateAngle += dt / 16.0f * glm::radians(90.0f);
 
     const float r = 1 - std::exp(-dt * 10.0f);
     glm::vec2 smoothDelta{};
