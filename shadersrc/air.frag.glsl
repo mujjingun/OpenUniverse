@@ -32,7 +32,7 @@ layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec2 inPos;
 
-const float thickness = 0.03f;
+const float thickness = 0.3f;
 const float pi = acos(-1);
 
 mat3 rotationMatrix(vec3 axis, float angle)
@@ -54,7 +54,7 @@ vec2 getOverallTexCoords(vec3 pos) {
     return sphericalCoords;
 }
 
-int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point)
+int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point0, out vec3 point1)
 {
     vec3 dir = normalize(p1 - p0);
     vec3 diff = center - p0;
@@ -68,89 +68,76 @@ int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point)
     if (t0 < t1) {
         t1 = -t1;
     }
-    point = p0 + dir * (t0 - t1);
+    point0 = p0 + dir * (t0 - t1);
+    point1 = p0 + dir * (t0 + t1);
     return t0 > 0? 1 : -1;
 }
 
 const float lightIntensity = 10.0f;
+const float H = 0.01;//0.00131847433; // scale height, units in ER (earth radius)
+const vec3 c = vec3(33.10836683, 77.3611417, 188.8702063); // scattering coefficient, units in ER^-1
+const int iterations = 10;
+
+float logDensity(float altitude) {
+    return -altitude / H;
+}
+
+vec3 logTransmittance(vec3 A, vec3 B) {
+    float v = 0;
+    float dt = 1. / iterations;
+    for (float t = 0; t < 1; t += dt) {
+        vec3 P = A * t + B * (1 - t);
+        v += exp(logDensity(length(P) - 1)) * dt;
+    }
+    return -c * v * distance(A, B);
+}
+
+float gamma(vec3 dir, vec3 L) {
+    float cosT = dot(normalize(dir), L);
+    float a = 1 + cosT * cosT;
+    return 3 / (16 * pi) * (a * a);
+}
+
+vec3 scatter(vec3 A, vec3 B) {
+    vec3 v = vec3(0);
+    float dt = 1. / iterations;
+
+    // light direction in model coordinates
+    const vec3 L = normalize((inverse(ubo.model) * -ubo.lightPos).xyz);
+
+    for (float t = 0; t < 1; t += dt) {
+        vec3 P = A * t + B * (1 - t);
+        vec3 logdF = logTransmittance(P, P - L) + logTransmittance(P, A) + logDensity(length(P) - 1);
+        v += exp(logdF) * dt;
+    }
+    return c * gamma(B - A, L) * v;
+}
 
 void main() {
-    vec4 unproj0 = ubo.iMVP * vec4(inPos, 0.0f, 1.0f);
-    unproj0.xyz /= unproj0.w;
+    vec4 unproj = ubo.iMVP * vec4(inPos, 0.0f, 1.0f);
+    unproj.xyz /= unproj.w;
 
-    vec3 cartCoords;
     float dist = length(ubo.modelEyePos) - 1;
 
-    outColor = vec4(0.0f);
+    vec3 A, B;
+    int orientation = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1 + thickness, A, B);
+    vec2 texCoords = getOverallTexCoords(normalize(A));
+    float cloudNoise = texture(texSamplers[0], vec3(texCoords, 1)).x;
 
-    //outColor = vec4(texture(shadowMap, gl_FragCoord.xy / vec2(600, 480)).rrr * 5, 1);
-    //return;
+    outColor = vec4(0);
 
-    // inside the atmosphere
-    if (dist < thickness) {
-        int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
-        if (orientation != 0) {
-            vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
+    if (orientation > 0) {
+        const vec3 L = normalize((inverse(ubo.model) * -ubo.lightPos).xyz);
 
-            vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
-            float cloudNoise = noise.x;
-
-            const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
-
-            const vec3 modelPos = cartCoords;
-            const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-            const vec3 normal = normalize(worldPos);
-            const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-            const float light = max(0.001f, dot(lightDir, normal)) * lightIntensity;
-
-            vec4 scatterColor = vec4(0.3f, 0.3f, 1.0f, 1.0f);
-            vec4 cloudColor = vec4(vec3(.7f), cloud);
-            outColor.a = cloudColor.a + scatterColor.a * (1.0f - cloudColor.a);
-            outColor.rgb = (cloudColor.rgb * cloudColor.a + scatterColor.rgb * scatterColor.a * (1.0f - cloudColor.a)) / outColor.a;
-            outColor = vec4(outColor.rgb * light, outColor.a);
-            gl_FragDepth = 1.0f - 0.001f;
-        }
-    }
-    // outside the atmosphere
-    if (dist >= thickness) {
-        int orientation = intersect(ubo.modelEyePos.xyz, unproj0.xyz, vec3(0), 1 + thickness, cartCoords);
-        if (orientation > 0) {
-            vec2 texCoords = getOverallTexCoords(normalize(cartCoords));
-
-            vec4 noise = texture(texSamplers[0], vec3(texCoords, 1));
-            float cloudNoise = noise.x;
-
-            const float cloud = smoothstep(0.0f, 1.0f, cloudNoise) * 0.9f;
-
-            const vec3 modelPos = cartCoords;
-            const vec3 worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-            const vec3 normal = normalize(worldPos);
-            const vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);
-            const float light = max(0.0, dot(lightDir, normal)) * lightIntensity + 0.001f;
-
-            vec3 vertexToEye = normalize(ubo.eyePos.xyz - worldPos);
-            float cosine = dot(vertexToEye, normal);
-            float b = (1.0f + thickness) * cosine;
-            float D = b * b - thickness * (2.0f + thickness);
-            float edgeness = D > 0? 0: 1;
-            float scatterLength = mix(2.0f * (b - sqrt(max(0, D))), 2.0f * cosine * (1.0f + thickness), edgeness);
-            const float maxScatterLength = sqrt(thickness * (2.0f + thickness));
-            scatterLength /= maxScatterLength;
-            vec4 scatterColor = vec4(0.7f, 0.7f, 1.0f, pow(scatterLength, 3) * 0.1f);
-            vec4 cloudColor = mix(vec4(vec3(.7f), cloud), vec4(0.0f), edgeness);
-            outColor.a = scatterColor.a + cloudColor.a * (1.0f - scatterColor.a);
-            outColor.rgb = (scatterColor.rgb * scatterColor.a + cloudColor.rgb * cloudColor.a * (1.0f - scatterColor.a)) / outColor.a;
-            outColor = vec4(outColor.rgb * light, outColor.a);
-            gl_FragDepth = 0;
-        }
+        outColor = vec4(scatter(A, B) * lightIntensity * 5, 1);
+        //outColor = vec4(vec3(distance(A, B)), 1);
     }
 
     // the sun
-    vec3 worldPos = (ubo.model * unproj0).xyz;
-    int orientation = intersect(ubo.eyePos.xyz, worldPos, ubo.lightPos.xyz, 10.0, cartCoords);
-    if (orientation > 0) {
+    vec3 worldPos = (ubo.model * unproj).xyz;
+    if (intersect(ubo.eyePos.xyz, worldPos, ubo.lightPos.xyz, 10.0, A, B) > 0) {
         outColor += vec4(100.0, 100.0, 100.0, 1.0);
-        gl_FragDepth = 1.0f - 0.001f;
     }
+    gl_FragDepth = 1.0f - 0.001f;
 }
 

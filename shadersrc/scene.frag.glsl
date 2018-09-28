@@ -25,7 +25,7 @@ void main()
         + texture(bloom, texCoords1).rgb
         + texture(bloom, texCoords2).rgb;
 
-    hdrColor += bloomColor * 3;
+    hdrColor += bloomColor * 2;
 
     vec3 mapped = vec3(1.0) - exp(-hdrColor * exposure);
     outColor = vec4(mapped, 1.0f);

@@ -80,11 +80,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         // make hdr float buffer
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
             hdrImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, hdrFormat,
-                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eInputAttachment,
-                vk::ImageAspectFlagBits::eColor));
-
-            brightImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, properties.extent, 1, vk::Format::eB8G8R8A8Unorm,
-                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage,
                 vk::ImageAspectFlagBits::eColor));
         }
 
@@ -99,11 +95,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
 
         vk::AttachmentReference multiSampleAttachmentRef{};
         multiSampleAttachmentRef.attachment = 2;
-        multiSampleAttachmentRef.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-        vk::AttachmentReference brightPassResultAttachmentRef{};
-        brightPassResultAttachmentRef.attachment = 3;
-        brightPassResultAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+        multiSampleAttachmentRef.layout = vk::ImageLayout::eGeneral;
 
         std::vector<vk::SubpassDescription> subpasses;
 
@@ -122,14 +114,6 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         atmosphereSubpass.pDepthStencilAttachment = &depthAttachmentRef;
         atmosphereSubpass.pResolveAttachments = &multiSampleAttachmentRef;
         subpasses.push_back(atmosphereSubpass);
-
-        vk::SubpassDescription brightPassSubpass{};
-        brightPassSubpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-        brightPassSubpass.colorAttachmentCount = 1;
-        brightPassSubpass.pColorAttachments = &brightPassResultAttachmentRef;
-        brightPassSubpass.inputAttachmentCount = 1;
-        brightPassSubpass.pInputAttachments = &multiSampleAttachmentRef;
-        subpasses.push_back(brightPassSubpass);
 
         // define dependencies
         std::vector<vk::SubpassDependency> dependencies;
@@ -155,17 +139,6 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         atmosphereDependency.dstAccessMask = {};
         atmosphereDependency.dependencyFlags = vk::DependencyFlagBits::eByRegion;
         dependencies.push_back(atmosphereDependency);
-
-        // bright pass
-        vk::SubpassDependency brightPassDependency{};
-        brightPassDependency.srcSubpass = 1;
-        brightPassDependency.dstSubpass = 2;
-        brightPassDependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        brightPassDependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-        brightPassDependency.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
-        brightPassDependency.dstAccessMask = vk::AccessFlagBits::eInputAttachmentRead;
-        brightPassDependency.dependencyFlags = vk::DependencyFlagBits::eByRegion;
-        dependencies.push_back(brightPassDependency);
 
         // define attachments
         std::vector<vk::AttachmentDescription> attachments;
@@ -203,20 +176,8 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         multiSampleAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         multiSampleAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         multiSampleAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        multiSampleAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        multiSampleAttachment.finalLayout = vk::ImageLayout::eGeneral;
         attachments.push_back(multiSampleAttachment);
-
-        // bright pass result attachment
-        vk::AttachmentDescription brightPassResultAttachment{};
-        brightPassResultAttachment.format = vk::Format::eB8G8R8A8Unorm;
-        brightPassResultAttachment.samples = vk::SampleCountFlagBits::e1;
-        brightPassResultAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-        brightPassResultAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        brightPassResultAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
-        brightPassResultAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        brightPassResultAttachment.initialLayout = vk::ImageLayout::eUndefined;
-        brightPassResultAttachment.finalLayout = vk::ImageLayout::eGeneral;
-        attachments.push_back(brightPassResultAttachment);
 
         hdrRenderPass = context.makeRenderPass(subpasses, dependencies, attachments);
 
@@ -242,18 +203,10 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
             "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
             vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, true, false, {}, {});
 
-        brightPassDescriptorSet = context.makeDescriptorSet(properties.imageCount,
-            { vk::DescriptorType::eInputAttachment }, { vk::ShaderStageFlagBits::eFragment }, { 1 });
-
-        brightPassPipelineLayout = context.makePipelineLayout({ *brightPassDescriptorSet.layout });
-        brightPassPipeline = context.makePipeline(*brightPassPipelineLayout, properties.extent, *hdrRenderPass, 2, vk::SampleCountFlagBits::e1,
-            "shaders/bright.vert.spv", "shaders/bright.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, false, false, {}, {});
-
         // make hdr framebuffers
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
             framebuffers.push_back(context.makeFramebuffer(
-                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view, *brightImages[i].view },
+                { *multiSampleImage.view, *depthImage.view, *hdrImages[i].view },
                 *hdrRenderPass, properties.extent));
         }
     }
@@ -263,18 +216,29 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         const vk::Extent2D bloomExtent{ properties.extent.width, properties.extent.height / 2 };
 
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
+            brightImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtent, 1, vk::Format::eB8G8R8A8Unorm,
+                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst,
+                vk::ImageAspectFlagBits::eColor));
+
             bloomImages.push_back(context.makeImage(vk::SampleCountFlagBits::e1, 1, bloomExtent, 1, vk::Format::eB8G8R8A8Unorm,
-                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
                 vk::ImageAspectFlagBits::eColor));
         }
+
+        downsampleDescriptorSet = context.makeDescriptorSet(properties.imageCount,
+            { vk::DescriptorType::eStorageImage, vk::DescriptorType::eStorageImage },
+            { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
+            { 1, 1 });
 
         bloomDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eStorageImage, vk::DescriptorType::eStorageImage },
             { vk::ShaderStageFlagBits::eCompute, vk::ShaderStageFlagBits::eCompute },
             { 1, 1 });
 
+        downsamplePipelineLayout = context.makePipelineLayout({ *downsampleDescriptorSet.layout });
+        downsamplePipeline = context.makeComputePipeline(*downsamplePipelineLayout, "shaders/down.comp.spv");
+
         bloomPipelineLayout = context.makePipelineLayout({ *bloomDescriptorSet.layout });
-        downsamplePipeline = context.makeComputePipeline(*bloomPipelineLayout, "shaders/down.comp.spv");
         bloomHPipeline = context.makeComputePipeline(*bloomPipelineLayout, "shaders/bloomh.comp.spv");
         bloomVPipeline = context.makeComputePipeline(*bloomPipelineLayout, "shaders/bloomv.comp.spv");
     }

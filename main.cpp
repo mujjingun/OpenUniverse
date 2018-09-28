@@ -270,15 +270,6 @@ void VulkanApplication::recordDrawCommands()
                 m_swapchain.shadowMapDescriptorSet.sets[index], 0, 0,
                 1, vk::DescriptorType::eCombinedImageSampler, &shadowMapImageInfo));
 
-            // hdr image for bright pass
-            vk::DescriptorImageInfo hdrBrightImageInfo{};
-            hdrBrightImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            hdrBrightImageInfo.imageView = *m_swapchain.hdrImages[index].view;
-
-            descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.brightPassDescriptorSet.sets[index], 0, 0,
-                1, vk::DescriptorType::eInputAttachment, &hdrBrightImageInfo));
-
             // fps indicator
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
@@ -290,13 +281,22 @@ void VulkanApplication::recordDrawCommands()
                 static_cast<std::uint32_t>(numBufInfos.size()),
                 vk::DescriptorType::eUniformBuffer, nullptr, numBufInfos.data()));
 
+            // hdr image for downsampling
+            vk::DescriptorImageInfo brightHdrImageInfo{};
+            brightHdrImageInfo.imageLayout = vk::ImageLayout::eGeneral;
+            brightHdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.downsampleDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eStorageImage, &brightHdrImageInfo));
+
             // bright passed image for bloom input
             vk::DescriptorImageInfo brightPassImageInfo{};
             brightPassImageInfo.imageLayout = vk::ImageLayout::eGeneral;
             brightPassImageInfo.imageView = *m_swapchain.brightImages[index].view;
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.bloomDescriptorSet.sets[index], 0, 0,
+                m_swapchain.bloomDescriptorSet.sets[index], 0, 0, // bloomh writes to this, bloomv reads this
                 1, vk::DescriptorType::eStorageImage, &brightPassImageInfo));
 
             // bloom result image
@@ -305,12 +305,16 @@ void VulkanApplication::recordDrawCommands()
             bloomResultImageInfo.imageView = *m_swapchain.bloomImages[index].view;
 
             descriptorWrites.push_back(vk::WriteDescriptorSet(
-                m_swapchain.bloomDescriptorSet.sets[index], 1, 0,
+                m_swapchain.downsampleDescriptorSet.sets[index], 1, 0,
+                1, vk::DescriptorType::eStorageImage, &bloomResultImageInfo));
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.bloomDescriptorSet.sets[index], 1, 0, // bloomh reads this, bloomv writes to this
                 1, vk::DescriptorType::eStorageImage, &bloomResultImageInfo));
 
             // bloom image for composite input
             vk::DescriptorImageInfo bloomImageInfo{};
-            bloomImageInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            bloomImageInfo.imageLayout = vk::ImageLayout::eGeneral;
             bloomImageInfo.imageView = *m_swapchain.bloomImages[index].view;
             bloomImageInfo.sampler = *m_sampler;
 
@@ -320,7 +324,7 @@ void VulkanApplication::recordDrawCommands()
 
             // hdr image for composite input
             vk::DescriptorImageInfo hdrImageInfo{};
-            hdrImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            hdrImageInfo.imageLayout = vk::ImageLayout::eGeneral;
             hdrImageInfo.imageView = *m_swapchain.hdrImages[index].view;
             hdrImageInfo.sampler = *m_sampler;
 
@@ -389,33 +393,44 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
                 commandBuffer.draw(3, 1, 0, 0);
 
-                commandBuffer.nextSubpass(vk::SubpassContents::eInline);
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.brightPassPipelineLayout, 0,
-                    { m_swapchain.brightPassDescriptorSet.sets[index] }, {});
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.brightPassPipeline);
-                commandBuffer.draw(3, 1, 0, 0);
-
                 commandBuffer.endRenderPass();
             }
 
             // bloom
             {
+                vk::Extent2D extent = m_swapchain.brightImages[index].extent;
+
+                // clear images
+                transitionImageLayout(commandBuffer, *m_swapchain.brightImages[index].image, 1,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 1);
+                commandBuffer.clearColorImage(*m_swapchain.brightImages[index].image, vk::ImageLayout::eTransferDstOptimal,
+                    { clearColor }, { vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1) });
+                transitionImageLayout(commandBuffer, *m_swapchain.brightImages[index].image, 1,
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, 1);
+
+                transitionImageLayout(commandBuffer, *m_swapchain.bloomImages[index].image, 1,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 1);
+                commandBuffer.clearColorImage(*m_swapchain.bloomImages[index].image, vk::ImageLayout::eTransferDstOptimal,
+                    { clearColor }, { vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1) });
+                transitionImageLayout(commandBuffer, *m_swapchain.bloomImages[index].image, 1,
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, 1);
+
+                // downsample
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *m_swapchain.downsamplePipelineLayout, 0,
+                    1, &m_swapchain.downsampleDescriptorSet.sets[index], 0, nullptr);
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.downsamplePipeline);
+                commandBuffer.dispatch(ceilDiv(extent.width / 2, 32), ceilDiv(extent.height, 32), 1);
+
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomPipelineLayout, 0,
                     1, &m_swapchain.bloomDescriptorSet.sets[index], 0, nullptr);
 
-                vk::Extent2D extent = m_swapchain.brightImages[index].extent;
-
-                // downsample
-                commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.downsamplePipeline);
-                commandBuffer.dispatch(ceilDiv(extent.width / 2, 32), ceilDiv(extent.height / 2, 32), 1);
-
                 // bloom horizontally
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomHPipeline);
-                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height / 2, 32), 1);
+                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height, 32), 1);
 
                 // bloom vertically
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *m_swapchain.bloomVPipeline);
-                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height / 2, 32), 1);
+                commandBuffer.dispatch(ceilDiv(extent.width, 32), ceilDiv(extent.height, 32), 1);
             }
 
             // bloom vertically + combine with hdr
