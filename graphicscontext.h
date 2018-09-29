@@ -82,6 +82,10 @@ public:
     ~SingleTimeCommandBuffer();
 };
 
+enum class BlendMode {
+    None, Regular, Additive
+};
+
 class GraphicsContext {
 
 public:
@@ -139,7 +143,7 @@ public:
         vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
         const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
         const char* geometryShaderFile,
-        vk::PrimitiveTopology primitiveType, vk::CullModeFlags cullMode, bool enableBlending,
+        vk::PrimitiveTopology primitiveType, vk::CullModeFlags cullMode, BlendMode blendMode,
         bool attachVertexData,
         vk::VertexInputBindingDescription bindingDescription,
         const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,

@@ -61,7 +61,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         shadowPlanetPipelineLayout = context.makePipelineLayout({ *shadowPlanetDescriptorSet.layout });
         shadowPlanetPipeline = context.makePipeline(*shadowPlanetPipelineLayout, shadowExtent, *shadowRenderPass, 0, vk::SampleCountFlagBits::e1,
             "shaders/planet.vert.spv", nullptr, "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
-            vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, true, false, {}, {});
+            vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, BlendMode::Regular, false, {}, {});
 
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
             shadowFramebuffers.push_back(context.makeFramebuffer({ *shadowImages[i].view }, *shadowRenderPass, shadowExtent));
@@ -197,11 +197,11 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         planetPipelineLayout = context.makePipelineLayout({ *planetDescriptorSet.layout, *shadowMapDescriptorSet.layout });
         planetPipeline = context.makePipeline(*planetPipelineLayout, properties.extent, *hdrRenderPass, 0, sampleCount,
             "shaders/planet.vert.spv", "shaders/planet.frag.spv", "shaders/planet.tesc.spv", "shaders/planet.tese.spv", nullptr,
-            vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, true, false, {}, {});
+            vk::PrimitiveTopology::ePatchList, vk::CullModeFlagBits::eBack, BlendMode::Regular, false, {}, {});
 
         atmospherePipeline = context.makePipeline(*planetPipelineLayout, properties.extent, *hdrRenderPass, 1, sampleCount,
             "shaders/air.vert.spv", "shaders/air.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, true, false, {}, {});
+            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, BlendMode::Additive, false, {}, {});
 
         // make hdr framebuffers
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
@@ -313,7 +313,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         scenePipelineLayout = context.makePipelineLayout({ *sceneDescriptorSet.layout });
         scenePipeline = context.makePipeline(*scenePipelineLayout, properties.extent, *presentRenderPass, 0, vk::SampleCountFlagBits::e1,
             "shaders/scene.vert.spv", "shaders/scene.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, false, false, {}, {});
+            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, BlendMode::None, false, {}, {});
 
         numbersDescriptorSet = context.makeDescriptorSet(properties.imageCount,
             { vk::DescriptorType::eUniformBuffer }, { vk::ShaderStageFlagBits::eFragment }, { 3 });
@@ -321,7 +321,7 @@ ou::SwapchainObject::SwapchainObject(const GraphicsContext& context, SwapchainPr
         numbersPipelineLayout = context.makePipelineLayout({ *numbersDescriptorSet.layout });
         numbersPipeline = context.makePipeline(*numbersPipelineLayout, properties.extent, *presentRenderPass, 1, vk::SampleCountFlagBits::e1,
             "shaders/numbers.vert.spv", "shaders/numbers.frag.spv", nullptr, nullptr, nullptr,
-            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, true, false, {}, {});
+            vk::PrimitiveTopology::eTriangleFan, vk::CullModeFlagBits::eFront, BlendMode::Regular, false, {}, {});
 
         for (std::size_t i = 0; i < properties.imageCount; ++i) {
             presentFramebuffers.push_back(context.makeFramebuffer({ *swapchainImageViews[i] }, *presentRenderPass, properties.extent));

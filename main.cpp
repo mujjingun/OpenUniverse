@@ -600,7 +600,8 @@ void VulkanApplication::drawFrame()
 
                 std::cout << "updating map span to " << newMapBounds.mapSpanTheta / glm::pi<float>() << "pi, "
                           << "theta = " << newMapBounds.mapCenterTheta
-                          << ", phi = " << newMapBounds.mapCenterPhi << std::endl;
+                          << ", phi = " << newMapBounds.mapCenterPhi
+                          << ", current altitude: " << length(ubo.modelEyePos) - 1 << "R" << std::endl;
             }
         }
     }
@@ -745,7 +746,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    m_planetRotateAngle += dt / 16.0f * glm::radians(90.0f);
+    //m_planetRotateAngle += dt / 16.0f * glm::radians(90.0f);
 
     const float r = 1 - std::exp(-dt * 10.0f);
     glm::vec2 smoothDelta{};

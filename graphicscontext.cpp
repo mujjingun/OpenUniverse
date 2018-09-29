@@ -952,7 +952,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile, const char* geometryShaderFile,
     vk::PrimitiveTopology primitiveType,
     vk::CullModeFlags cullMode,
-    bool enableBlending, bool attachVertexData,
+    BlendMode blendMode, bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,
     const char* vertexShaderEntryPoint, const char* fragmentShaderEntryPoint,
@@ -1067,9 +1067,9 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR
         | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    colorBlendAttachment.blendEnable = enableBlending;
-    colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha; // Optional
-    colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha; // Optional
+    colorBlendAttachment.blendEnable = blendMode != BlendMode::None;
+    colorBlendAttachment.srcColorBlendFactor = blendMode == BlendMode::Additive ? vk::BlendFactor::eOne : vk::BlendFactor::eSrcAlpha;
+    colorBlendAttachment.dstColorBlendFactor = blendMode == BlendMode::Additive ? vk::BlendFactor::eSrcAlpha : vk::BlendFactor::eOneMinusSrcAlpha;
     colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd; // Optional
     colorBlendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eOne; // Optional
     colorBlendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eZero; // Optional

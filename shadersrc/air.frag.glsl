@@ -32,19 +32,8 @@ layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec2 inPos;
 
-const float thickness = 0.3f;
+const float thickness = 0.01f;
 const float pi = acos(-1);
-
-mat3 rotationMatrix(vec3 axis, float angle)
-{
-    float s = sin(angle);
-    float c = cos(angle);
-    float oc = 1.0 - c;
-
-    return mat3(oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
-                oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
-                oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c        );
-}
 
 vec2 getOverallTexCoords(vec3 pos) {
     vec3 mapCoords = vec3(pos.zy, -pos.x);
@@ -65,28 +54,25 @@ int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point0, out vec3 
     }
 
     float t1 = sqrt(r * r - d2);
-    if (t0 < t1) {
-        t1 = -t1;
-    }
+    //if (t0 < t1) t1 = -t1;
     point0 = p0 + dir * (t0 - t1);
     point1 = p0 + dir * (t0 + t1);
     return t0 > 0? 1 : -1;
 }
 
 const float lightIntensity = 10.0f;
-const float H = 0.01;//0.00131847433; // scale height, units in ER (earth radius)
+const float H = 0.00131847433; // scale height, units in ER (earth radius)
 const vec3 c = vec3(33.10836683, 77.3611417, 188.8702063); // scattering coefficient, units in ER^-1
-const int iterations = 10;
 
 float logDensity(float altitude) {
-    return -altitude / H;
+    return -max(altitude, 0) / H;
 }
 
 vec3 logTransmittance(vec3 A, vec3 B) {
     float v = 0;
-    float dt = 1. / iterations;
+    float dt = 1. / 10;
     for (float t = 0; t < 1; t += dt) {
-        vec3 P = A * t + B * (1 - t);
+        vec3 P = B * (t + dt/2) + A * (1 - t - dt/2);
         v += exp(logDensity(length(P) - 1)) * dt;
     }
     return -c * v * distance(A, B);
@@ -95,42 +81,75 @@ vec3 logTransmittance(vec3 A, vec3 B) {
 float gamma(vec3 dir, vec3 L) {
     float cosT = dot(normalize(dir), L);
     float a = 1 + cosT * cosT;
-    return 3 / (16 * pi) * (a * a);
+    return 3 / (16 * pi) * a;
 }
 
-vec3 scatter(vec3 A, vec3 B) {
+vec3 scatter(vec3 A, vec3 B, vec3 L) {
     vec3 v = vec3(0);
-    float dt = 1. / iterations;
+    float dt = 1. / 10;
 
-    // light direction in model coordinates
-    const vec3 L = normalize((inverse(ubo.model) * -ubo.lightPos).xyz);
-
+    // numerical integration
     for (float t = 0; t < 1; t += dt) {
-        vec3 P = A * t + B * (1 - t);
-        vec3 logdF = logTransmittance(P, P - L) + logTransmittance(P, A) + logDensity(length(P) - 1);
-        v += exp(logdF) * dt;
+        vec3 P = B * (t + dt/2) + A * (1 - t - dt/2);
+        vec3 logdF = vec3(0);
+        logdF += logTransmittance(A, P);
+        logdF += logDensity(length(P) - 1) + 1;
+
+        vec3 _, C;
+        intersect(P, P - L, vec3(0), 1 + thickness, _, C);
+        //if (intersect(P, P - L, vec3(0), 1, _, _) != 0) {
+            logdF += logTransmittance(P, C);
+            v += exp(logdF) * dt;
+        //}
     }
-    return c * gamma(B - A, L) * v;
+    return c * gamma(B - A, L) * v * distance(A, B);
 }
 
 void main() {
-    vec4 unproj = ubo.iMVP * vec4(inPos, 0.0f, 1.0f);
+    vec4 unproj = ubo.iMVP * vec4(inPos, 1.0f, 1.0f);
     unproj.xyz /= unproj.w;
 
     float dist = length(ubo.modelEyePos) - 1;
 
-    vec3 A, B;
-    int orientation = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1 + thickness, A, B);
+    vec3 A0, B0, A1, B1, A, B;
+    vec3 viewRay = normalize(unproj.xyz - ubo.modelEyePos.xyz);
+    int outer = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1 + thickness, A0, B0);
+    int inner = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1, A1, B1);
+
+    if (dist > thickness && outer > 0) {
+        if (inner == 0) {
+            A = A0;
+            B = B0;
+        }
+        else if (inner > 0) {
+            A = A0;
+            B = A1;
+        }
+    } else if (dist <= thickness) {
+        if (inner > 0) {
+            A = ubo.modelEyePos.xyz;
+            B = A1;
+        }
+        else {
+            A = ubo.modelEyePos.xyz;
+            B = B0;
+        }
+    }
+
     vec2 texCoords = getOverallTexCoords(normalize(A));
     float cloudNoise = texture(texSamplers[0], vec3(texCoords, 1)).x;
 
-    outColor = vec4(0);
+    outColor = vec4(0, 0, 0, 1);
 
-    if (orientation > 0) {
-        const vec3 L = normalize((inverse(ubo.model) * -ubo.lightPos).xyz);
+    if (dist > thickness && outer > 0 || dist <= thickness) {
+        // light direction in model coordinates
+        const vec3 L = normalize(-(inverse(ubo.model) * ubo.lightPos).xyz);
 
-        outColor = vec4(scatter(A, B) * lightIntensity * 5, 1);
-        //outColor = vec4(vec3(distance(A, B)), 1);
+        vec3 atmosphere = scatter(A, B, L) * lightIntensity;
+        vec3 _, C;
+        intersect(B, B - L, vec3(0), 1 + thickness, _, C);
+        float tr = dot(exp(logTransmittance(A, B) + logTransmittance(B, C)), vec3(0.2126, 0.7152, 0.0722));
+        outColor = vec4(atmosphere, 1);
     }
 
     // the sun
@@ -138,6 +157,6 @@ void main() {
     if (intersect(ubo.eyePos.xyz, worldPos, ubo.lightPos.xyz, 10.0, A, B) > 0) {
         outColor += vec4(100.0, 100.0, 100.0, 1.0);
     }
-    gl_FragDepth = 1.0f - 0.001f;
+    gl_FragDepth = 0.0f;
 }
 

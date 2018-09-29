@@ -83,6 +83,40 @@ vec2 getGradient(uint idx, vec2 texCoords, float span) {
     return vec2(h21 - h01, h12 - h10) * size.xy / span;
 }
 
+const float H = 0.00131847433; // scale height, units in ER (earth radius)
+const vec3 c = vec3(33.10836683, 77.3611417, 188.8702063); // scattering coefficient, units in ER^-1
+
+float logDensity(float altitude) {
+    return -max(altitude, 0) / H;
+}
+
+vec3 logTransmittance(vec3 A, vec3 B) {
+    float v = 0;
+    float dt = 1. / 10;
+    for (float t = 0; t < 1; t += dt) {
+        vec3 P = B * (t + dt/2) + A * (1 - t - dt/2);
+        v += exp(logDensity(length(P) - 1)) * dt;
+    }
+    return -c * v * distance(A, B);
+}
+
+int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point0, out vec3 point1)
+{
+    vec3 dir = normalize(p1 - p0);
+    vec3 diff = center - p0;
+    float t0 = dot(diff, dir);
+    float d2 = dot(diff, diff) - t0 * t0;
+    if (d2 > r * r) {
+        return 0;
+    }
+
+    float t1 = sqrt(r * r - d2);
+    //if (t0 < t1) t1 = -t1;
+    point0 = p0 + dir * (t0 - t1);
+    point1 = p0 + dir * (t0 + t1);
+    return t0 > 0? 1 : -1;
+}
+
 void main() {
     vec3 cartCoords = normalize(inPos);
 
@@ -137,7 +171,7 @@ void main() {
     vec3 lightReflect = normalize(reflect(lightDir, normal));
     vec3 vertexToEye = normalize(worldPos - ubo.eyePos.xyz);
     float specularFactor = dot(vertexToEye, lightReflect);
-    specularFactor = pow(max(0, specularFactor), 16);
+    specularFactor = pow(max(0, specularFactor), 32);
     light += specularFactor * mix(lightIntensity, 0.0f, oceanOrTerrain);
 
     // shadowing
@@ -148,5 +182,11 @@ void main() {
 
     light = max(0.001, light * visibility);
 
-    outColor = vec4(light * color.xyz, color.a);
+    // scattering
+    const vec3 L = normalize(modelPos - (inverse(ubo.model) * ubo.lightPos).xyz);
+    vec3 _, C;
+    intersect(modelPos, modelPos - L, vec3(0), 1 + 0.01, _, C);
+    vec3 vLight = light * pow(exp(logTransmittance(modelPos, C)), vec3(1.2));
+
+    outColor = vec4(vLight * color.rgb, color.a);
 }
