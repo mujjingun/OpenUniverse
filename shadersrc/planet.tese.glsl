@@ -30,6 +30,7 @@ layout (location = 0) in vec3 inPos[];
 
 layout (location = 0) out vec3 outPos;
 layout (location = 1) out vec3 worldPos;
+layout (location = 2) out float logz;
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -72,6 +73,9 @@ vec2 getTexCoords(vec3 pos) {
     return texCoords;
 }
 
+const float C = 1;
+const float far = 10000.0;
+
 // The PG subdivided an equilateral triangle into
 // smaller triangles and executes the TES for every generated vertex.
 void main(void)
@@ -84,6 +88,11 @@ void main(void)
 
     vec3 modelPos = pos * (1.0f + vec3(noise * 0.001f));
     worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
-    gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
     outPos = pos;
+
+    gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
+
+    const float FC = 1.0 / log(far * C + 1);
+    logz = log(gl_Position.w * C + 1) * FC;
+    gl_Position.z = logz * gl_Position.w;
 }

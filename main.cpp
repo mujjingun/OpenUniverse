@@ -495,11 +495,9 @@ void VulkanApplication::drawFrame()
 
         ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
 
-        // TODO: try logarithmic depth?
-        float near = 0.5f * (length(glm::vec3(ubo.modelEyePos)) - 1.0f);
         ubo.proj = glm::perspective(glm::radians(45.0f),
             static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
-            near, near * 100.0f);
+            0.1f, 10.0f);
         ubo.proj[1][1] *= -1; // invert Y axis
 
         ubo.iMVP = glm::inverse(ubo.proj * ubo.view * ubo.model);

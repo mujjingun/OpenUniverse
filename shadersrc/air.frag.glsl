@@ -2,8 +2,6 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
-layout (depth_greater) out float gl_FragDepth;
-
 layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
@@ -29,8 +27,10 @@ layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 
 layout(location = 0) out vec4 outColor;
+layout (depth_any) out float gl_FragDepth;
 
-layout(location = 0) in vec2 inPos;
+layout(location = 0) in vec3 unproj;
+layout(location = 1) in vec3 L;
 
 const float thickness = 0.01f;
 const float pi = acos(-1);
@@ -106,9 +106,6 @@ vec3 scatter(vec3 A, vec3 B, vec3 L) {
 }
 
 void main() {
-    vec4 unproj = ubo.iMVP * vec4(inPos, 1.0f, 1.0f);
-    unproj.xyz /= unproj.w;
-
     float dist = length(ubo.modelEyePos) - 1;
 
     vec3 A0, B0, A1, B1, A, B;
@@ -139,24 +136,29 @@ void main() {
     vec2 texCoords = getOverallTexCoords(normalize(A));
     float cloudNoise = texture(texSamplers[0], vec3(texCoords, 1)).x;
 
+    bool render = false;
     outColor = vec4(0, 0, 0, 1);
 
     if (dist > thickness && outer > 0 || dist <= thickness) {
-        // light direction in model coordinates
-        const vec3 L = normalize(-(inverse(ubo.model) * ubo.lightPos).xyz);
-
         vec3 atmosphere = scatter(A, B, L) * lightIntensity;
         vec3 _, C;
         intersect(B, B - L, vec3(0), 1 + thickness, _, C);
         float tr = dot(exp(logTransmittance(A, B) + logTransmittance(B, C)), vec3(0.2126, 0.7152, 0.0722));
         outColor = vec4(atmosphere, 1);
+        render = true;
     }
 
     // the sun
-    vec3 worldPos = (ubo.model * unproj).xyz;
+    vec3 worldPos = mat3(ubo.model) * unproj;
     if (intersect(ubo.eyePos.xyz, worldPos, ubo.lightPos.xyz, 10.0, A, B) > 0) {
-        outColor += vec4(100.0, 100.0, 100.0, 1.0);
+        outColor += vec4(100.0, 100.0, 100.0, 0.0);
+        render = true;
     }
+
+    if (!render) {
+        discard;
+    }
+
     gl_FragDepth = 0.0f;
 }
 

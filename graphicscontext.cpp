@@ -858,7 +858,7 @@ void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, st
 ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const
 {
     vk::Format depthFormat = [&]() {
-        auto candidateFormats = { vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint };
+        auto candidateFormats = { vk::Format::eD32SfloatS8Uint, vk::Format::eD32Sfloat, vk::Format::eD24UnormS8Uint };
         auto depthFormatIt = std::find_if(candidateFormats.begin(), candidateFormats.end(),
             [&](vk::Format format) {
                 vk::FormatProperties props = m_physicalDevice.getFormatProperties(format);
