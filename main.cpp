@@ -11,6 +11,8 @@
 #include "glm/gtx/projection.hpp"
 #include "glm/gtx/string_cast.hpp"
 
+#include "terrain.h"
+
 namespace ou {
 
 static const std::size_t maxFramesInFlight = 2;
@@ -63,6 +65,7 @@ struct UniformBufferObject {
     std::int32_t parallelCount;
     std::int32_t meridianCount;
     std::uint32_t readyNoiseImageIndex;
+    float terrainFactor;
 };
 
 VulkanApplication::VulkanApplication()
@@ -502,8 +505,9 @@ void VulkanApplication::drawFrame()
     {
         // render pass
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), m_planetRotateAngle, glm::normalize(glm::vec3(0.0f, 0.0f, 1.0f)));
-        ubo.model = glm::scale(ubo.model, glm::vec3(1.0f, 1.0f, 1.0f));
+        ubo.model = glm::rotate(glm::mat4(1.0f), m_planet.rotateAngle, m_planet.rotateAxis);
+        ubo.model = glm::scale(ubo.model, glm::vec3(m_planet.radius));
+        ubo.terrainFactor = m_planet.terrainFactor;
 
         ubo.eyePos = glm::vec4(m_eyePosition, 0);
         ubo.view = glm::lookAt(m_eyePosition, m_eyePosition + m_lookDirection, m_upDirection);
@@ -676,7 +680,10 @@ void VulkanApplication::run()
     m_lastFpsTime = m_lastFrameTime = system_clock::now();
     m_fpsFrameCounter = m_fpsMeasurementsCount = 0;
 
-    m_planetRotateAngle = 0.0f;
+    m_planet.rotateAxis = glm::normalize(glm::vec3(0, 0.2f, 0.8f));
+    m_planet.terrainFactor = 0.001f;
+    m_planet.radius = 1.0f;
+    m_planet.rotateAngle = 0.0f;
 
     m_eyePosition = glm::vec3(0.0f, -3.0f, 0.0f);
     m_lookDirection = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -741,9 +748,9 @@ void VulkanApplication::run()
         }
 
         // cap framerate
-        //const double frameInterval = 1.0 / (m_context.refreshRate() + 1);
-        //while (system_clock::now() - m_lastFrameTime < duration<double>(frameInterval))
-        //    std::this_thread::sleep_for(microseconds(1));
+        const double frameInterval = 1.0 / (m_context.refreshRate() + 1);
+        while (system_clock::now() - m_lastFrameTime < duration<double>(frameInterval))
+            std::this_thread::sleep_for(microseconds(1));
     }
 
     // TODO: temp workaround for freezing in fullscreen mode
@@ -758,7 +765,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     using namespace std::chrono;
     const float dt = duration<float, seconds::period>(delta).count();
 
-    //m_planetRotateAngle += dt / 16.0f * glm::radians(90.0f);
+    m_planet.rotateAngle += dt / 32.0f * glm::radians(90.0f);
 
     const float r = 1 - std::exp(-dt * 10.0f);
     glm::vec2 smoothDelta{};
@@ -773,7 +780,7 @@ void VulkanApplication::step(std::chrono::duration<double> delta)
     m_lookDirection = rotate0 * rotate1 * glm::vec4(m_lookDirection, 1.0f);
     m_upDirection = rotate1 * glm::vec4(m_upDirection, 1.0f);
 
-    float distance = glm::distance(m_eyePosition, glm::vec3(0)) - 1.0f;
+    float distance = glm::distance(m_eyePosition, glm::vec3(0)) - m_planet.radius;
     float speed = distance + 0.02f;
     if (m_movingForward) {
         glm::vec3 velocity = m_lookDirection * speed * dt;

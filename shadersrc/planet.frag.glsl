@@ -14,6 +14,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     int parallelCount;
     int meridianCount;
     uint noiseIndex;
+    float terrainFactor;
 } ubo;
 
 layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
@@ -62,7 +63,6 @@ void getMapCoords(vec3 pos, float centerT, float centerP, float span, out vec3 m
     texCoords = getTexCoords(mapCoords, span);
 }
 
-const float r = 0.001f;
 const float lightIntensity = 10.0f;
 
 // returns unnormalized normal
@@ -70,8 +70,8 @@ vec3 getNormal(vec3 coords, float noise, vec2 grad) {
     const vec2 sphere = vec2(acos(coords.z), atan(coords.y, coords.x));
     const vec3 dgdt = vec3(cos(sphere.x) * cos(sphere.y), cos(sphere.x) * sin(sphere.y), -sin(sphere.x));
     const vec3 dgdp = vec3(sin(sphere.x) * -sin(sphere.y), sin(sphere.x) * cos(sphere.y), 0);
-    const vec3 dndt = r * grad.x * coords + dgdt * (1 + r * noise);
-    const vec3 dndp = r * grad.y * coords + dgdp * (1 + r * noise);
+    const vec3 dndt = ubo.terrainFactor * grad.x * coords + dgdt * (1 + ubo.terrainFactor * noise);
+    const vec3 dndp = ubo.terrainFactor * grad.y * coords + dgdp * (1 + ubo.terrainFactor * noise);
     return cross(dndt, dndp);
 }
 
@@ -163,7 +163,7 @@ void main() {
     color = mix(vec4(1.0f), color, smoothstep(0.0f, 0.01f, temp));
 
     // lighting
-    vec3 modelPos = cartCoords * mix(1.0f, 1.0f + terrain * r, oceanOrTerrain);
+    vec3 modelPos = cartCoords * mix(1.0f, 1.0f + terrain * ubo.terrainFactor, oceanOrTerrain);
     vec3 worldPos = mat3(ubo.model) * modelPos;
 
     vec3 lightDir = normalize(ubo.lightPos.xyz - worldPos);

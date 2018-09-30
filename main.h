@@ -26,6 +26,13 @@ struct MapBoundsObject {
     float mapSpanTheta;
 };
 
+struct Planet {
+    glm::vec3 rotateAxis;
+    float rotateAngle;
+    float terrainFactor;
+    float radius;
+};
+
 class VulkanApplication {
 
 public:
@@ -71,8 +78,8 @@ private:
     std::chrono::system_clock::time_point m_lastFrameTime;
 
     // planet related stuff
+    Planet m_planet;
     int m_parallelCount, m_meridianCount;
-    float m_planetRotateAngle;
 
     // player camera
     glm::vec3 m_eyePosition;

@@ -5,6 +5,7 @@ add_executable(${PROJECT_NAME}
     main.cpp
     graphicscontext.cpp
     swapchainobject.cpp
+    terrain.cpp
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

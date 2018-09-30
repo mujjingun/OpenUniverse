@@ -16,6 +16,7 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
     int parallelCount;
     int meridianCount;
     uint noiseIndex;
+    float terrainFactor;
 } ubo;
 
 layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
@@ -86,7 +87,7 @@ void main(void)
     vec4 noiseTex = texture(texSamplers[ubo.noiseIndex], vec3(texCoords, 0));
     const float noise = max(0, noiseTex.r);
 
-    vec3 modelPos = pos * (1.0f + vec3(noise * 0.001f));
+    vec3 modelPos = pos * (1.0f + vec3(noise * ubo.terrainFactor));
     worldPos = (ubo.model * vec4(modelPos, 1.0f)).xyz;
     outPos = pos;
 
