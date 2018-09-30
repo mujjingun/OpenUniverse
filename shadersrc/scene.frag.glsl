@@ -9,7 +9,7 @@ layout(location = 0) out vec4 outColor;
 
 layout (location = 0) in vec2 texCoords;
 
-const float exposure = 0.3;
+const float exposure = 1.0;
 
 void main()
 {

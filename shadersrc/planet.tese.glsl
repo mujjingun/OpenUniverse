@@ -92,6 +92,7 @@ void main(void)
 
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0f);
 
+    // logarithmic depth
     const float FC = 1.0 / log(far * C + 1);
     logz = log(gl_Position.w * C + 1) * FC;
     gl_Position.z = logz * gl_Position.w;

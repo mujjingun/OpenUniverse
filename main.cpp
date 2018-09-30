@@ -270,6 +270,15 @@ void VulkanApplication::recordDrawCommands()
                 m_swapchain.shadowMapDescriptorSet.sets[index], 0, 0,
                 1, vk::DescriptorType::eCombinedImageSampler, &shadowMapImageInfo));
 
+            // depth input attachment for atmosphere rendering
+            vk::DescriptorImageInfo depthInputImageInfo{};
+            depthInputImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            depthInputImageInfo.imageView = *m_swapchain.depthImage.view;
+
+            descriptorWrites.push_back(vk::WriteDescriptorSet(
+                m_swapchain.deferredDescriptorSet.sets[index], 0, 0,
+                1, vk::DescriptorType::eInputAttachment, &depthInputImageInfo));
+
             // fps indicator
             std::vector<vk::DescriptorBufferInfo> numBufInfos{};
             for (auto const& buf : m_numberBuffers) {
@@ -384,12 +393,18 @@ void VulkanApplication::recordDrawCommands()
                 commandBuffer.beginRenderPass(mainRenderPassInfo, vk::SubpassContents::eInline);
 
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.planetPipelineLayout, 0,
-                    { m_swapchain.planetDescriptorSet.sets[index], m_swapchain.shadowMapDescriptorSet.sets[index] }, {});
+                    { m_swapchain.planetDescriptorSet.sets[index], m_swapchain.shadowMapDescriptorSet.sets[index] },
+                    {});
 
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.planetPipeline);
                 commandBuffer.draw(planetVertexCount, 1, 0, 0);
 
                 commandBuffer.nextSubpass(vk::SubpassContents::eInline);
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipelineLayout, 0,
+                    { m_swapchain.planetDescriptorSet.sets[index],
+                        m_swapchain.shadowMapDescriptorSet.sets[index],
+                        m_swapchain.deferredDescriptorSet.sets[index] },
+                    {});
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_swapchain.atmospherePipeline);
                 commandBuffer.draw(3, 1, 0, 0);
 
@@ -495,9 +510,8 @@ void VulkanApplication::drawFrame()
 
         ubo.modelEyePos = glm::inverse(ubo.model) * ubo.eyePos;
 
-        ubo.proj = glm::perspective(glm::radians(45.0f),
-            static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height,
-            0.1f, 10.0f);
+        float aspectRatio = static_cast<float>(m_swapchainProps.extent.width) / m_swapchainProps.extent.height;
+        ubo.proj = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 10.0f);
         ubo.proj[1][1] *= -1; // invert Y axis
 
         ubo.iMVP = glm::inverse(ubo.proj * ubo.view * ubo.model);

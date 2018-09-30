@@ -128,7 +128,7 @@ public:
     ImageObject makeImage(vk::SampleCountFlagBits numSamples, std::uint32_t mipLevels, vk::Extent2D extent, uint32_t layerCount,
         vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlagBits aspect) const;
 
-    ImageObject makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const;
+    ImageObject makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount, vk::ImageUsageFlags extraFlags = {}) const;
 
     ImageObject makeMultiSampleImage(vk::Format imageFormat, vk::Extent2D extent, std::uint32_t layerCount,
         vk::SampleCountFlagBits sampleCount) const;
@@ -143,7 +143,7 @@ public:
         vk::RenderPass renderPass, uint32_t subpassIndex, vk::SampleCountFlagBits sampleCount,
         const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile,
         const char* geometryShaderFile,
-        vk::PrimitiveTopology primitiveType, vk::CullModeFlags cullMode, BlendMode blendMode,
+        vk::PrimitiveTopology primitiveType, vk::CullModeFlags cullMode, bool enableDepthTest, BlendMode blendMode,
         bool attachVertexData,
         vk::VertexInputBindingDescription bindingDescription,
         const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,

@@ -7,8 +7,6 @@
 
 namespace ou {
 
-const std::uint32_t maxSampleCount = 2;
-
 // set of elements that need to be recreated when the window gets resized
 struct SwapchainObject {
     vk::UniqueSwapchainKHR swapchain;
@@ -28,7 +26,6 @@ struct SwapchainObject {
     std::vector<vk::UniqueFramebuffer> shadowFramebuffers{};
 
     // main render stage
-    ImageObject multiSampleImage;
     ImageObject depthImage;
     std::vector<ImageObject> hdrImages{};
 
@@ -36,9 +33,12 @@ struct SwapchainObject {
 
     DescriptorSetObject planetDescriptorSet;
     DescriptorSetObject shadowMapDescriptorSet;
+    DescriptorSetObject deferredDescriptorSet;
 
     vk::UniquePipelineLayout planetPipelineLayout;
     vk::UniquePipeline planetPipeline;
+
+    vk::UniquePipelineLayout atmospherePipelineLayout;
     vk::UniquePipeline atmospherePipeline;
 
     std::vector<vk::UniqueFramebuffer> framebuffers{};

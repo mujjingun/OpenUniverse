@@ -24,9 +24,10 @@ layout(set = 0, binding = 1, std140) uniform MapBoundsObject {
 
 layout(location = 0) out vec3 unproj;
 layout(location = 1) out vec3 L;
+layout(location = 2) out vec2 outPos;
 
 void main() {
-    vec2 outPos = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2) * 2.0f + -1.0f;
+    outPos = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2) * 2.0f + -1.0f;
 
     vec4 unproj0 = ubo.iMVP * vec4(outPos, 1.0f, 1.0f);
     unproj = unproj0.xyz / unproj0.w;

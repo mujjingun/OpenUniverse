@@ -26,11 +26,13 @@ layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 
+layout (input_attachment_index = 0, set = 2, binding = 0) uniform subpassInput depthBuffer;
+
 layout(location = 0) out vec4 outColor;
-layout (depth_any) out float gl_FragDepth;
 
 layout(location = 0) in vec3 unproj;
 layout(location = 1) in vec3 L;
+layout(location = 2) in vec2 outPos;
 
 const float thickness = 0.01f;
 const float pi = acos(-1);
@@ -62,10 +64,10 @@ int intersect(vec3 p0, vec3 p1, vec3 center, float r, out vec3 point0, out vec3 
 
 const float lightIntensity = 10.0f;
 const float H = 0.00131847433; // scale height, units in ER (earth radius)
-const vec3 c = vec3(33.10836683, 77.3611417, 188.8702063); // scattering coefficient, units in ER^-1
+const vec3 c = vec3(33, 77, 188); // scattering coefficient, units in ER^-1
 
-float logDensity(float altitude) {
-    return -max(altitude, 0) / H;
+float density(float altitude) {
+    return exp(-max(altitude, 0) / H);
 }
 
 vec3 logTransmittance(vec3 A, vec3 B) {
@@ -73,7 +75,7 @@ vec3 logTransmittance(vec3 A, vec3 B) {
     float dt = 1. / 10;
     for (float t = 0; t < 1; t += dt) {
         vec3 P = B * (t + dt/2) + A * (1 - t - dt/2);
-        v += exp(logDensity(length(P) - 1)) * dt;
+        v += density(length(P) - 1) * dt;
     }
     return -c * v * distance(A, B);
 }
@@ -93,17 +95,19 @@ vec3 scatter(vec3 A, vec3 B, vec3 L) {
         vec3 P = B * (t + dt/2) + A * (1 - t - dt/2);
         vec3 logdF = vec3(0);
         logdF += logTransmittance(A, P);
-        logdF += logDensity(length(P) - 1) + 1;
 
         vec3 _, C;
         intersect(P, P - L, vec3(0), 1 + thickness, _, C);
         //if (intersect(P, P - L, vec3(0), 1, _, _) != 0) {
-            logdF += logTransmittance(P, C);
-            v += exp(logdF) * dt;
+        logdF += logTransmittance(P, C);
+        v += exp(logdF) * density(length(P) - 1) * dt;
         //}
     }
     return c * gamma(B - A, L) * v * distance(A, B);
 }
+
+const float C = 1;
+const float far = 10000.0;
 
 void main() {
     float dist = length(ubo.modelEyePos) - 1;
@@ -113,19 +117,28 @@ void main() {
     int outer = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1 + thickness, A0, B0);
     int inner = intersect(ubo.modelEyePos.xyz, unproj.xyz, vec3(0), 1, A1, B1);
 
+    // reconstruct model position from depth buffer
+    float ldepth = subpassLoad(depthBuffer).r;
+    const float FC = 1.0 / log(far * C + 1);
+    float w = (exp(ldepth / FC) - 1) / C;
+    float z = 10 / (10 - .1) + 10 * .1 / (.1 - 10) / w;
+    vec4 pos = vec4(outPos, z, 1.0);
+    vec4 modelCoords = ubo.iMVP * pos;
+    vec3 modelPos = modelCoords.xyz / modelCoords.w;
+
     if (dist > thickness && outer > 0) {
-        if (inner == 0) {
+        if (ldepth == 1.0) {
             A = A0;
             B = B0;
         }
-        else if (inner > 0) {
+        else {
             A = A0;
-            B = A1;
+            B = modelPos;
         }
     } else if (dist <= thickness) {
-        if (inner > 0) {
+        if (ldepth < 1.0) {
             A = ubo.modelEyePos.xyz;
-            B = A1;
+            B = modelPos;
         }
         else {
             A = ubo.modelEyePos.xyz;
@@ -140,7 +153,7 @@ void main() {
     outColor = vec4(0, 0, 0, 1);
 
     if (dist > thickness && outer > 0 || dist <= thickness) {
-        vec3 atmosphere = scatter(A, B, L) * lightIntensity;
+        vec3 atmosphere = scatter(A, B, L) * lightIntensity * 5;
         vec3 _, C;
         intersect(B, B - L, vec3(0), 1 + thickness, _, C);
         float tr = dot(exp(logTransmittance(A, B) + logTransmittance(B, C)), vec3(0.2126, 0.7152, 0.0722));
@@ -158,7 +171,5 @@ void main() {
     if (!render) {
         discard;
     }
-
-    gl_FragDepth = 0.0f;
 }
 

@@ -855,7 +855,7 @@ void ou::transitionImageLayout(vk::CommandBuffer commandBuf, vk::Image image, st
     commandBuf.pipelineBarrier(sourceStage, destinationStage, {}, { nullptr }, { nullptr }, { barrier });
 }
 
-ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount) const
+ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::SampleCountFlagBits sampleCount, vk::ImageUsageFlags extraFlags) const
 {
     vk::Format depthFormat = [&]() {
         auto candidateFormats = { vk::Format::eD32SfloatS8Uint, vk::Format::eD32Sfloat, vk::Format::eD24UnormS8Uint };
@@ -874,7 +874,7 @@ ou::ImageObject ou::GraphicsContext::makeDepthImage(vk::Extent2D extent, vk::Sam
 
     // create image object
     ImageObject depth = makeImage(sampleCount, 1, extent, 1, depthFormat,
-        vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth);
+        vk::ImageUsageFlagBits::eDepthStencilAttachment | extraFlags, vk::ImageAspectFlagBits::eDepth);
 
     // make it a depth buffer
     transitionImageLayout(*beginSingleTimeCommands(), depth.image.get(), 1,
@@ -952,7 +952,7 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     const char* vertexShaderFile, const char* fragmentShaderFile, const char* tcShaderFile, const char* teShaderFile, const char* geometryShaderFile,
     vk::PrimitiveTopology primitiveType,
     vk::CullModeFlags cullMode,
-    BlendMode blendMode, bool attachVertexData,
+    bool enableDepthTest, BlendMode blendMode, bool attachVertexData,
     vk::VertexInputBindingDescription bindingDescription,
     const std::vector<vk::VertexInputAttributeDescription>& attributeDescriptions,
     const char* vertexShaderEntryPoint, const char* fragmentShaderEntryPoint,
@@ -1086,8 +1086,8 @@ vk::UniquePipeline ou::GraphicsContext::makePipeline(vk::PipelineLayout pipeline
     colorBlending.blendConstants[3] = 0.0f;
 
     vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthTestEnable = enableDepthTest;
+    depthStencil.depthWriteEnable = enableDepthTest;
     depthStencil.depthCompareOp = vk::CompareOp::eLess;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;

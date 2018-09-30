@@ -27,7 +27,7 @@ layout(set = 0, binding = 2) uniform sampler2DArray texSamplers[2];
 layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
 
 layout(location = 0) out vec4 outColor;
-layout(depth_any) out float gl_FragDepth;
+//layout(depth_any) out float gl_FragDepth;
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 worldPos;
@@ -188,8 +188,9 @@ void main() {
     const vec3 L = normalize(modelPos - (inverse(ubo.model) * ubo.lightPos).xyz);
     vec3 _, C;
     intersect(modelPos, modelPos - L, vec3(0), 1 + 0.01, _, C);
-    vec3 vLight = light * pow(exp(logTransmittance(modelPos, C)), vec3(1.2));
+    vec3 vLight = light * exp(logTransmittance(modelPos, C));
 
     outColor = vec4(vLight * color.rgb, color.a);
+    //outColor = vec4(mod(modelPos, vec3(0.1)) * 10, 1.0);
     gl_FragDepth = logz;
 }
